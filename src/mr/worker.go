@@ -14,6 +14,8 @@ import (
 var workerId int
 var task Task
 
+const outputDir = "mr-out"
+
 // for sorting by key.
 type ByKey []KeyValue
 
@@ -43,10 +45,16 @@ func Worker(mapf func(string, string) []KeyValue,
 	//reducef = reducef
 
 	// Worker is assigned an ID
-	Register()
+	err := Register()
+	if err != nil {
+		return
+	}
 
 	// Worker gets task from Coordinator
-	GetTask()
+	err = GetTask()
+	if err != nil {
+		return
+	}
 
 	// Worker begins task
 	Execute(mapf, reducef)
@@ -78,7 +86,7 @@ func Read(filename string) string {
 	return string(content)
 }
 
-func Register() {
+func Register() (err error) {
 
 	// declare an argument structure.
 	args := new(interface{})
@@ -94,12 +102,17 @@ func Register() {
 	if ok {
 		fmt.Printf("reply.workerId %v\n", reply.WorkerId)
 		workerId = reply.WorkerId
+
+		return nil
 	} else {
 		fmt.Printf("call failed!\n")
+
+		err := fmt.Errorf("Register failed")
+		return err
 	}
 }
 
-func GetTask() {
+func GetTask() (err error) {
 
 	// declare an argument structure.
 	args := TaskArgs{WorkerId: workerId}
@@ -127,13 +140,18 @@ func GetTask() {
 			}
 		case REDUCE_TASK_TYPE:
 		}
+
+		return nil
 	} else {
 		fmt.Printf("call failed!\n")
+
+		err := fmt.Errorf("GetTask failed")
+		return err
 	}
 }
 
 func Execute(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
+	reducef func(string, []string) string) (err error) {
 	// If map task, Worker calls map
 	// If reduce task, Worker calls reduce
 
@@ -151,6 +169,9 @@ func Execute(mapf func(string, string) []KeyValue,
 
 		// fmt.Printf("task id: %d\n", task.(MapTask).id)
 
+		if _, err := os.Stat(outputDir); os.IsNotExist(err) {
+			os.Mkdir(outputDir, os.ModeDir|0755)
+		}
 		i := 0
 		for i < len(intermediate) {
 			key := intermediate[i].Key
@@ -159,7 +180,7 @@ func Execute(mapf func(string, string) []KeyValue,
 			// fmt.Printf("ihash: %v\n", ihash(key))
 
 			oname := fmt.Sprintf("mr-%v-%v", task.(MapTask).id, ihash(key))
-			ofile, _ := os.Create(oname)
+			ofile, _ := os.Create(outputDir + "/" + oname)
 			enc := json.NewEncoder(ofile)
 
 			j := i + 1
@@ -184,6 +205,8 @@ func Execute(mapf func(string, string) []KeyValue,
 		//content := Read(task.(MapTask).inputSlice.filename)
 		//mapf(task.(MapTask).inputSlice.filename, content)
 	}
+
+	return nil
 }
 
 // example function to show how to make an RPC call to the coordinator.
@@ -221,15 +244,16 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		//log.Fatal("dialing:", err)
+		log.Printf("dialing: %v\n", err)
 	}
 	defer c.Close()
 
 	err = c.Call(rpcname, args, reply)
-	if err == nil {
-		return true
+	if err != nil {
+		log.Printf("error: %v\n", err)
+		return false
 	}
 
-	fmt.Println(err)
-	return false
+	return true
 }

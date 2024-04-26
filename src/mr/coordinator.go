@@ -81,8 +81,12 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		// Get next task
 		err, t := c.toDo.Pop()
 		if err != nil {
-			log.Fatalf("error %v", err)
+			// log.Fatalf("error %v", err)
+			log.Printf("error %v\n", err)
+
+			return err
 		}
+		c.toDo.List()
 
 		fmt.Printf("task %v\n", t.(MapTask).id)
 
@@ -96,6 +100,7 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		// Move task to inProgress
 		//t.startTime = time.Now()
 		c.inProgress.Push(t)
+		c.inProgress.List()
 
 		// Update worker state
 		c.workers[args.WorkerId] = TaskWorker{
@@ -159,6 +164,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Calculate input slices
 	for i, filename := range files {
+		fmt.Printf("id: %d, file %v\n", i, filename)
 
 		t := MapTask{
 			id:         i,
@@ -194,6 +200,6 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Start RPC server
 	c.phase = COORDINATOR_MAP_PHASE
-	c.server()
+	go c.server()
 	return &c
 }

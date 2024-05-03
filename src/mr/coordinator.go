@@ -231,10 +231,29 @@ func (c *Coordinator) InitTasks(files []string) error {
 }
 
 func (c *Coordinator) StatusCheck() error {
+	for {
+		// Heartbeats from workers
+
+		// Check status
+		err := c.PhaseCheck()
+		if err != nil {
+			log.Fatalf("error %v", err)
+			return err
+		}
+		time.Sleep(time.Second)
+
+		if c.phase == COORDINATOR_COMPLETE_PHASE {
+			break
+		}
+	}
+	return nil
+}
+
+func (c *Coordinator) PhaseCheck() error {
 	// Phase restrictions
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
-		fmt.Println("StatusCheck (Coordinator): Map phase")
+		fmt.Println("PhaseCheck (Coordinator): Map phase")
 
 		// Check ToDo and InProgress
 		if len(c.toDo) == 0 && len(c.inProgress) == 0 {
@@ -246,24 +265,29 @@ func (c *Coordinator) StatusCheck() error {
 			}
 
 			// Change to reduce phase
-			fmt.Println("StatusCheck (Coordinator): Change to reduce phase")
+			fmt.Println("PhaseCheck (Coordinator): Change to reduce phase")
 			c.phase = COORDINATOR_REDUCE_PHASE
 		}
+
+		return nil
 	case COORDINATOR_REDUCE_PHASE:
-		fmt.Println("StatusCheck (Coordinator): Reduce phase")
+		fmt.Println("PhaseCheck (Coordinator): Reduce phase")
 
 		// Check ToDo and InProgress
 		// Check reduce slice completion status
 
 		// Change to complete phase when reduce phase complete
-		fmt.Println("StatusCheck (Coordinator): Change to complete phase")
+		fmt.Println("PhaseCheck (Coordinator): Change to complete phase")
 		c.phase = COORDINATOR_COMPLETE_PHASE
+
+		return nil
+	case COORDINATOR_COMPLETE_PHASE:
+		fmt.Println("PhaseCheck (Coordinator): Complete phase")
+		return nil
 	default:
 		err := fmt.Errorf("invalid phase %v", c.phase)
 		return err
 	}
-
-	return nil
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -285,18 +309,12 @@ func (c *Coordinator) server() {
 func (c *Coordinator) Done() bool {
 	ret := false // Return true for mrcoordinator.go to exit
 
-	fmt.Println("Looping...")
-	time.Sleep(5)
+	fmt.Println("Checking Done")
 
-	// Heartbeats from workers
-
-	// Check status
-	c.StatusCheck()
-
-	// Set ret to true when reduce phase complete
 	if c.phase == COORDINATOR_COMPLETE_PHASE {
 		ret = true
 	}
+
 	return ret
 }
 
@@ -318,6 +336,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Start RPC server
 	c.phase = COORDINATOR_MAP_PHASE
+	go c.StatusCheck()
 	go c.server()
 	return &c
 }

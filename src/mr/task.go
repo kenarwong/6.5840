@@ -4,6 +4,7 @@ import (
 	"time"
 )
 
+const NO_TASK_TYPE = 0
 const MAP_TASK_TYPE = 1
 const REDUCE_TASK_TYPE = 2
 

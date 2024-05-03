@@ -25,8 +25,21 @@ type TaskReply struct {
 	WorkerId       int
 	TaskType       int
 	MapTaskId      int
+	ReduceTaskId   int
 	Filename       string
 	ReportInterval time.Duration
+}
+
+type TaskStatusArgs struct {
+	WorkerId     int
+	TaskType     int
+	MapTaskId    int
+	ReduceTaskId int
+	Complete     bool
+	Progress     int
+}
+
+type TaskStatusReply struct {
 }
 
 //

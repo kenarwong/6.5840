@@ -8,13 +8,14 @@ const NO_TASK_TYPE = 0
 const MAP_TASK_TYPE = 1
 const REDUCE_TASK_TYPE = 2
 
+const WORKER_STATE_IDLE = 0
+const WORKER_STATE_ACTIVE = 1
+const WORKER_STATE_FAILED = -1
+
 type Task interface {
 	Id() int
 	TaskType() int
-}
-
-type Status struct {
-	description string
+	GetReportInterval() int
 }
 
 type InputSlice struct {
@@ -29,6 +30,7 @@ type MapTask struct {
 	startTime       time.Time
 	lastUpdatedTime time.Time
 	endTime         time.Time
+	reportInterval  int
 	completed       bool
 }
 
@@ -40,6 +42,10 @@ func (t MapTask) TaskType() int {
 	return MAP_TASK_TYPE
 }
 
+func (t MapTask) GetReportInterval() int {
+	return t.reportInterval
+}
+
 type ReduceTask struct {
 	id              int
 	filename        string
@@ -47,6 +53,7 @@ type ReduceTask struct {
 	startTime       time.Time
 	lastUpdatedTime time.Time
 	endTime         time.Time
+	reportInterval  int
 	completed       bool
 }
 
@@ -56,4 +63,8 @@ func (t ReduceTask) Id() int {
 
 func (t ReduceTask) TaskType() int {
 	return REDUCE_TASK_TYPE
+}
+
+func (t ReduceTask) GetReportInterval() int {
+	return t.reportInterval
 }

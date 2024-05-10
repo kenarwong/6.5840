@@ -19,9 +19,6 @@ const COORDINATOR_MAP_PHASE = 1
 const COORDINATOR_REDUCE_PHASE = 2
 const COORDINATOR_COMPLETE_PHASE = 3
 
-const WORKER_STATE_IDLE = 0
-const WORKER_STATE_ACTIVE = 1
-
 type PhaseData struct {
 	numberOfTotalTasks int
 }
@@ -30,11 +27,14 @@ type Coordinator struct {
 	// Your definitions here.
 	phase           int
 	nReduce         int
-	workers         map[int]TaskWorker
 	mapPhaseData    PhaseData
 	reducePhaseData PhaseData
 
-	// Locks
+	// Worker state
+	muWorkers sync.Mutex
+	workers   map[int]TaskWorker
+
+	// Task tracking
 	muToDo       sync.Mutex
 	toDo         map[int]Task
 	muInProgress sync.Mutex
@@ -44,9 +44,16 @@ type Coordinator struct {
 }
 
 type TaskWorker struct {
+	workerId int
 	state    int
 	taskType int
 	task     Task
+}
+
+func (c *Coordinator) AddUpdateWorker(w TaskWorker) {
+	c.muWorkers.Lock()
+	defer c.muWorkers.Unlock()
+	c.workers[w.workerId] = w
 }
 
 func (c *Coordinator) AddToDoTask(t Task) {
@@ -138,10 +145,13 @@ func (c *Coordinator) Register(args *interface{}, reply *RegisterReply) error {
 
 	// Register worker ID
 	workerId := len(c.workers)
-	c.workers[workerId] = TaskWorker{
+	c.AddUpdateWorker(TaskWorker{
+		workerId: workerId,
 		state:    WORKER_STATE_IDLE,
 		taskType: NO_TASK_TYPE,
-	}
+		task:     nil,
+	})
+	fmt.Printf("WorkerId %v registered.\n", workerId)
 
 	// Reply
 	// fmt.Println("worker id:", workerId)
@@ -151,6 +161,8 @@ func (c *Coordinator) Register(args *interface{}, reply *RegisterReply) error {
 }
 
 func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
+	fmt.Printf("GetTask (Coordinator): Request from WorkerId %v\n", args.WorkerId)
+
 	// Phase restrictions
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
@@ -165,10 +177,19 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		// Get task
 		i := len(c.toDo) - 1
 
+		// No tasks available
 		if i < 0 {
-			log.Printf("No more tasks.")
+			log.Printf("GetTask (Coordinator): No tasks available.")
 			reply.WorkerId = args.WorkerId
 			reply.TaskType = NO_TASK_TYPE
+
+			// Update worker state
+			c.AddUpdateWorker(TaskWorker{
+				workerId: args.WorkerId,
+				state:    WORKER_STATE_IDLE,
+				taskType: NO_TASK_TYPE,
+				task:     nil,
+			})
 			return nil
 		}
 
@@ -193,11 +214,12 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		c.AddInProgressTask(t)
 
 		// Update worker state
-		c.workers[args.WorkerId] = TaskWorker{
+		c.AddUpdateWorker(TaskWorker{
+			workerId: args.WorkerId,
 			state:    WORKER_STATE_ACTIVE,
 			taskType: MAP_TASK_TYPE,
 			task:     t,
-		}
+		})
 
 	case REDUCE_TASK_TYPE:
 	}
@@ -219,8 +241,8 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 	switch args.TaskType {
 	case MAP_TASK_TYPE:
 		// Task report
-		fmt.Printf("TaskStatus: WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
-		fmt.Printf("TaskStatus: Progress %v, Complete %v \n", args.Progress, args.Complete)
+		fmt.Printf("TaskStatus (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
+		fmt.Printf("TaskStatus (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
 
 		// Complete
 		if args.Complete {
@@ -239,12 +261,14 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 			// Add to completed
 			c.AddCompletedTask(t)
 
-			// Update worker state
-			c.workers[args.WorkerId] = TaskWorker{
+			c.AddUpdateWorker(TaskWorker{
+				workerId: args.WorkerId,
 				state:    WORKER_STATE_IDLE,
 				taskType: NO_TASK_TYPE,
 				task:     nil,
-			}
+			})
+
+			c.PrintTaskReport()
 		}
 
 		// In Progress
@@ -257,10 +281,8 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 
 	case REDUCE_TASK_TYPE:
 	default:
-		log.Printf("TaskStatus: Unknown TaskType %v\n", args.TaskType)
+		log.Printf("TaskStatus (Coordinator): Unknown TaskType %v\n", args.TaskType)
 	}
-
-	c.PrintTaskReport()
 	return nil
 }
 
@@ -310,8 +332,6 @@ func (c *Coordinator) InitTasks(files []string) error {
 
 func (c *Coordinator) StatusCheck() error {
 	for {
-		// Heartbeats from workers
-
 		// Check status
 		err := c.PhaseCheck()
 		if err != nil {
@@ -331,17 +351,19 @@ func (c *Coordinator) PhaseCheck() error {
 	// Phase restrictions
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
-		fmt.Println("PhaseCheck (Coordinator): Map phase")
+		//fmt.Println("PhaseCheck (Coordinator): Map phase")
 
 		// Check if all map tasks are complete
 		// Check ToDo and InProgress
 		if c.mapPhaseData.numberOfTotalTasks == len(c.completed) &&
 			len(c.toDo) == 0 && len(c.inProgress) == 0 {
+			fmt.Printf("PhaseCheck (Coordinator): Map phase complete.\n")
+			fmt.Printf("PhaseCheck (Coordinator): Worker status report...\n")
+
 			// Worker status report
-			for w, wk := range c.workers {
-				if wk.state != WORKER_STATE_IDLE {
-					fmt.Printf("Worker Id %v not idle", w)
-				}
+			for _, wk := range c.workers {
+				fmt.Printf("WorkerId %v, Task Type %d, Worker State %d\n",
+					wk.workerId, wk.state, wk.taskType)
 			}
 
 			// Change to reduce phase

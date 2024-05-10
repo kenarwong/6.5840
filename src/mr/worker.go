@@ -6,16 +6,27 @@ import (
 	"hash/fnv"
 	"io"
 	"log"
+	"math"
 	"net/rpc"
 	"os"
 	"sort"
+	"time"
 )
 
 type WorkerData struct {
 	workerId int
+	state    int
 	task     Task
+	taskType int
 	progress int
+	complete bool
 
+	// Notification channels
+	notification chan int
+	report       <-chan time.Time
+	quit         chan bool
+
+	// Map and Reduce functions
 	mapf    func(string, string) []KeyValue
 	reducef func(string, []string) string
 }
@@ -48,11 +59,103 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func WorkerLoop() {
+
+	// Goroutine: server to receive notifications from coordinator
+	// Tasks notification
+	// Task notification channel
+	// Quit signal
+	// Quit channel
+
+	// blocking loop
+	// receive channels for:
+	// notifications, quit, ticker
+
+	// infinite for
+
+	for {
+		select {
+		// select
+		// unbuffered channel for task notifications
+		// receivers block channels until it is ready
+		// task notification arrives on channel
+		// GetTask()
+		// perform task if not already active or failed
+		// set active status
+		// non-blocking Execute, so we can continue producing heartbeats
+		// defer set non-active status
+
+		case <-workerData.notification:
+			fmt.Printf("WorkerLoop: WorkerId %v: Notification received.\n", workerData.workerId)
+
+			// Worker gets task from Coordinator
+			err := GetTask()
+			if err != nil {
+				workerData.state = WORKER_STATE_FAILED
+			}
+
+			// If task exists
+			// Worker is not already active or failed
+			if workerData.task != nil &&
+				workerData.state != WORKER_STATE_ACTIVE &&
+				workerData.state != WORKER_STATE_FAILED {
+
+				// Worker begins task
+				go func() {
+					// Set active
+					workerData.state = WORKER_STATE_ACTIVE
+
+					// Update channel with new ticker
+					ticker := time.NewTicker(time.Duration(workerData.task.GetReportInterval()) * time.Millisecond)
+					workerData.report = ticker.C
+
+					// To be performed on completion
+					defer func() {
+						workerData.state = WORKER_STATE_IDLE
+						ReportStatus() // Force report on completion
+
+						// ***TEMP ABORT***
+						workerData.quit <- true
+					}()
+
+					err := Execute()
+					if err != nil {
+						workerData.state = WORKER_STATE_FAILED
+						workerData.report = nil
+					}
+				}()
+			}
+		case <-workerData.report:
+			if workerData.state == WORKER_STATE_ACTIVE {
+				//fmt.Printf("WorkerLoop: WorkerId %v: Active report\n", workerData.workerId)
+				ReportStatus()
+			}
+		case <-workerData.quit:
+			fmt.Printf("WorkerLoop: WorkerId %v: Quit\n", workerData.workerId)
+			return
+		default:
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	// ticker every tick heartbeat
+	// if working on task, report status
+	// 		including complete status
+	// if not, report status anyways?
+
+}
+
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	workerData.mapf = mapf
-	workerData.reducef = reducef
+
+	workerData = WorkerData{
+		state:        WORKER_STATE_IDLE,
+		mapf:         mapf,
+		reducef:      reducef,
+		notification: make(chan int),
+		quit:         make(chan bool),
+	}
 
 	// Worker is assigned an ID
 	err := Register()
@@ -60,26 +163,14 @@ func Worker(mapf func(string, string) []KeyValue,
 		return
 	}
 
+	go func() {
+		// ***TEMP TRIGGER***
+		time.Sleep(5 * time.Second)
+		workerData.notification <- 1
+	}()
+
 	// Start Worker Loop
-	// Worker gets task from Coordinator
-	err = GetTask()
-	if err != nil {
-		return
-	}
-
-	if workerData.task != nil {
-		// Worker begins task
-		Execute(mapf, reducef)
-
-		// Worker starts goroutine to periodically report task status to Coordinator
-		// go Heartbeat()
-
-		// Worker reports task completion to Coordinator
-		//Report()
-
-		// uncomment to send the Example RPC to the coordinator.
-		//CallExample()
-	}
+	WorkerLoop()
 }
 
 func Read(filename string) string {
@@ -104,6 +195,8 @@ func Register() (err error) {
 	ok := call("Coordinator.Register", args, replyPtr)
 	if ok {
 		workerData.workerId = unmarshal()
+		fmt.Printf("Register: WorkerId %v registered.\n", workerData.workerId)
+
 		return nil
 	} else {
 		fmt.Printf("call failed!\n")
@@ -114,6 +207,7 @@ func Register() (err error) {
 }
 
 func GetTask() (err error) {
+	fmt.Printf("GetTask: WorkerId %v.\n", workerData.workerId)
 
 	argsPtr, replyPtr, unmarshal := MarshalGetTaskCall(workerData.workerId)
 	ok := call("Coordinator.GetTask", argsPtr, replyPtr)
@@ -123,8 +217,15 @@ func GetTask() (err error) {
 			log.Fatalf("GetTask (Worker): unmarshal failed")
 		}
 
-		// Reset progress
-		workerData.progress = 0
+		// If new task is available
+		if workerData.task != nil {
+			workerData.taskType = workerData.task.TaskType()
+			workerData.progress = 0     // Reset progress
+			workerData.complete = false // Reset complete
+		} else {
+			workerData.taskType = NO_TASK_TYPE
+			fmt.Printf("GetTask (WorkerId %v): No tasks available.\n", workerData.workerId)
+		}
 
 		return nil
 	} else {
@@ -135,17 +236,17 @@ func GetTask() (err error) {
 	}
 }
 
-func Execute(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) (err error) {
+func Execute() (err error) {
+	//fmt.Printf("Execute: WorkerId %v.\n", workerData.workerId)
 	// If map task, Worker calls map
 	// If reduce task, Worker calls reduce
 
-	switch workerData.task.TaskType() {
+	switch workerData.taskType {
 	case MAP_TASK_TYPE:
 		filename := workerData.task.(MapTask).inputSlice.filename
 		content := Read(filename)
 
-		intermediate := mapf(filename, string(content))
+		intermediate := workerData.mapf(filename, string(content))
 
 		//intermediate := []KeyValue{}
 		//intermediate = append(intermediate, kva...)
@@ -158,6 +259,9 @@ func Execute(mapf func(string, string) []KeyValue,
 		if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
 			os.Mkdir(tmpDir, os.ModeDir|0755)
 		}
+		//else if !os.IsExist(err) {
+		//	log.Fatalf("cannot make temporary intermediate data directory: %v", tmpDir)
+		//}
 
 		// Loop through all key/value pairs
 		i := 0
@@ -167,8 +271,13 @@ func Execute(mapf func(string, string) []KeyValue,
 			// fmt.Printf("key: %v\n", key)
 			// fmt.Printf("ihash: %v\n", ihash(key))
 
-			oname := fmt.Sprintf(tmpPrefix+"%v-%v", workerData.task.(MapTask).id, ihash(key))
-			ofile, _ := os.Create(tmpDir + "/" + oname)
+			oname := fmt.Sprintf(tmpPrefix+"%v-%v", workerData.task.Id(), ihash(key))
+			filename := tmpDir + "/" + oname
+			ofile, err := os.Create(filename)
+			if err != nil {
+				log.Fatalf("cannot create: %v", filename)
+			}
+
 			enc := json.NewEncoder(ofile)
 
 			j := i + 1
@@ -187,23 +296,35 @@ func Execute(mapf func(string, string) []KeyValue,
 			}
 
 			i = j
-			//progress = int(math.Round(float64((i * 100) / len(intermediate))))
-			//fmt.Printf("WorkerId: %v, TaskId: %v, Progress: %v\n", workerId, task.(MapTask).id, progress)
-		}
-		argsPtr, replyPtr, _ := MarshalTaskStatusCall(workerData.workerId, workerData.task.(MapTask), 100, true)
 
-		ok := call("Coordinator.TaskStatus", argsPtr, replyPtr)
-		if ok {
-		} else {
-			fmt.Printf("call failed!\n")
+			// Update progress
+			workerData.progress = int(math.Round(float64((i * 100) / len(intermediate))))
+
+			// *** TEMP FAKE DELAY ***
+			time.Sleep(1 * time.Millisecond)
 		}
+		workerData.complete = true // Officially mark as complete (as opposed to regular reporting)
+		fmt.Printf("Execute (Worker): WorkerId: %v, TaskId: %v, Complete: %v\n", workerData.workerId, workerData.task.Id(), workerData.complete)
 
 	case REDUCE_TASK_TYPE:
 		//content := Read(task.(MapTask).inputSlice.filename)
-		//mapf(task.(MapTask).inputSlice.filename, content)
+		//workerData.reducef(task.(MapTask).inputSlice.filename, content)
 	}
 
 	return nil
+}
+
+func ReportStatus() {
+	//fmt.Printf("ReportStatus: WorkerId: %v, TaskId: %v, Progress: %v, Complete: %t\n",
+	//	workerData.workerId, workerData.task.Id(), workerData.progress, workerData.complete)
+
+	argsPtr, replyPtr, _ := MarshalTaskStatusCall(workerData.workerId, workerData.task, workerData.progress, workerData.complete)
+
+	ok := call("Coordinator.TaskStatus", argsPtr, replyPtr)
+	if ok {
+	} else {
+		fmt.Printf("call failed!\n")
+	}
 }
 
 // example function to show how to make an RPC call to the coordinator.

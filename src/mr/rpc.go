@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
 )
 
 type RegisterReply struct {
@@ -35,7 +34,7 @@ type TaskReply struct {
 	MapTaskId      int
 	ReduceTaskId   int
 	Filename       string
-	ReportInterval time.Duration
+	ReportInterval int
 }
 
 func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Task)) {
@@ -43,18 +42,21 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 	return &TaskArgs{WorkerId: workerData.workerId}, &reply, func() (error, Task) {
 		var task Task
 
+		// fmt.Printf("MarshalGetTaskCall: reply.TaskType %v\n", reply.TaskType)
+
 		switch reply.TaskType {
+		case NO_TASK_TYPE:
+			task = nil
 		case MAP_TASK_TYPE:
 			task = MapTask{
 				id: reply.MapTaskId,
 				inputSlice: InputSlice{
 					filename: reply.Filename,
 				},
+				reportInterval: reply.ReportInterval,
 			}
 		case REDUCE_TASK_TYPE:
 			task = ReduceTask{}
-		case NO_TASK_TYPE:
-			task = nil
 		default:
 			err := fmt.Errorf("invalid task type %v", reply.TaskType)
 			return err, nil
@@ -69,8 +71,8 @@ type TaskStatusArgs struct {
 	TaskType     int
 	MapTaskId    int
 	ReduceTaskId int
-	Complete     bool
 	Progress     int
+	Complete     bool
 }
 
 type TaskStatusReply struct {
@@ -82,7 +84,7 @@ func MarshalTaskStatusCall(workerId int, task Task, progress int, complete bool)
 		TaskType:  task.TaskType(),
 		MapTaskId: task.Id(),
 		Progress:  progress,
-		Complete:  true,
+		Complete:  complete,
 	}
 	reply := TaskStatusReply{}
 	return &args, &reply, func() {

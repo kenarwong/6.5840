@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -27,22 +28,82 @@ type PhaseData struct {
 
 type Coordinator struct {
 	// Your definitions here.
-	phase   int
-	nReduce int
-	workers map[int]TaskWorker
-
-	// Locks
-	toDo            map[int]Task
-	inProgress      map[int]Task
-	completed       map[int]Task
+	phase           int
+	nReduce         int
+	workers         map[int]TaskWorker
 	mapPhaseData    PhaseData
 	reducePhaseData PhaseData
+
+	// Locks
+	muToDo       sync.Mutex
+	toDo         map[int]Task
+	muInProgress sync.Mutex
+	inProgress   map[int]Task
+	muCompleted  sync.Mutex
+	completed    map[int]Task
 }
 
 type TaskWorker struct {
 	state    int
 	taskType int
 	task     Task
+}
+
+func (c *Coordinator) AddToDoTask(t Task) {
+	c.muToDo.Lock()
+	defer c.muToDo.Unlock()
+	c.toDo[t.Id()] = t
+}
+
+func (c *Coordinator) GetToDoTask(id int) (Task, bool) {
+	c.muToDo.Lock()
+	defer c.muToDo.Unlock()
+	t, ok := c.toDo[id]
+	return t, ok
+}
+
+func (c *Coordinator) RemoveToDoTask(t Task) {
+	c.muToDo.Lock()
+	defer c.muToDo.Unlock()
+	delete(c.toDo, t.Id())
+}
+
+func (c *Coordinator) AddInProgressTask(t Task) {
+	c.muInProgress.Lock()
+	defer c.muInProgress.Unlock()
+	c.inProgress[t.Id()] = t
+}
+
+func (c *Coordinator) GetInProgressTask(id int) (Task, bool) {
+	c.muToDo.Lock()
+	defer c.muToDo.Unlock()
+	t, ok := c.inProgress[id]
+	return t, ok
+}
+
+func (c *Coordinator) RemoveInProgressTask(t Task) {
+	c.muInProgress.Lock()
+	defer c.muInProgress.Unlock()
+	delete(c.inProgress, t.Id())
+}
+
+func (c *Coordinator) AddCompletedTask(t Task) {
+	c.muCompleted.Lock()
+	defer c.muCompleted.Unlock()
+	c.completed[t.Id()] = t
+}
+
+func (c *Coordinator) GetCompletedTask(id int) (Task, bool) {
+	c.muToDo.Lock()
+	defer c.muToDo.Unlock()
+	t, ok := c.completed[id]
+	return t, ok
+}
+
+func (c *Coordinator) RemoveCompletedTask(t Task) {
+	c.muCompleted.Lock()
+	defer c.muCompleted.Unlock()
+	delete(c.completed, t.Id())
 }
 
 // an example RPC handler.
@@ -111,16 +172,14 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 			return nil
 		}
 
-		t, ok := c.toDo[i]
+		t, ok := c.GetToDoTask(i)
 		if !ok {
 			// log.Fatalf("error %v", err)
 			log.Printf("GetTask (Coordinator): Missing task at index %v", i)
 			err := fmt.Errorf("Task tracking error")
 			return err
 		}
-		delete(c.toDo, i)
-
-		//fmt.Printf("task %v\n", t.(MapTask).id)
+		c.RemoveToDoTask(t)
 
 		// Reply to worker
 		reply.WorkerId = args.WorkerId
@@ -131,7 +190,7 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 
 		// Move task to inProgress
 		//t.startTime = time.Now()
-		c.inProgress[i] = t
+		c.AddInProgressTask(t)
 
 		// Update worker state
 		c.workers[args.WorkerId] = TaskWorker{
@@ -165,10 +224,9 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 
 		// Complete
 		if args.Complete {
-			// Move task from inProgress to Complete
 			//t.lastUpdatedTime = time.Now()
 
-			t, ok := c.inProgress[args.MapTaskId]
+			t, ok := c.GetInProgressTask(args.MapTaskId)
 			if !ok {
 				log.Printf("TaskStatus (Coordinator): Missing task at index %v", args.MapTaskId)
 				err := fmt.Errorf("Task tracking error")
@@ -176,10 +234,10 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 			}
 
 			// Remove from inProgress
-			delete(c.inProgress, args.MapTaskId)
+			c.RemoveInProgressTask(t)
 
 			// Add to completed
-			c.completed[args.MapTaskId] = t
+			c.AddCompletedTask(t)
 
 			// Update worker state
 			c.workers[args.WorkerId] = TaskWorker{
@@ -218,7 +276,7 @@ func (c *Coordinator) InitTasks(files []string) error {
 			id:         i,
 			inputSlice: InputSlice{filename: filename},
 		}
-		c.toDo[i] = t
+		c.AddToDoTask(t)
 
 		//	fmt.Println(filename)
 		//	fi, err := os.Stat(filename)
@@ -275,8 +333,10 @@ func (c *Coordinator) PhaseCheck() error {
 	case COORDINATOR_MAP_PHASE:
 		fmt.Println("PhaseCheck (Coordinator): Map phase")
 
+		// Check if all map tasks are complete
 		// Check ToDo and InProgress
-		if len(c.toDo) == 0 && len(c.inProgress) == 0 {
+		if c.mapPhaseData.numberOfTotalTasks == len(c.completed) &&
+			len(c.toDo) == 0 && len(c.inProgress) == 0 {
 			// Worker status report
 			for w, wk := range c.workers {
 				if wk.state != WORKER_STATE_IDLE {

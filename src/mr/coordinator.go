@@ -21,14 +21,22 @@ const COORDINATOR_COMPLETE_PHASE = 3
 const WORKER_STATE_IDLE = 0
 const WORKER_STATE_ACTIVE = 1
 
+type PhaseData struct {
+	numberOfTotalTasks int
+}
+
 type Coordinator struct {
 	// Your definitions here.
-	phase      int
-	nReduce    int
-	workers    map[int]TaskWorker
-	toDo       map[int]Task
-	inProgress map[int]Task
-	completed  map[int]Task
+	phase   int
+	nReduce int
+	workers map[int]TaskWorker
+
+	// Locks
+	toDo            map[int]Task
+	inProgress      map[int]Task
+	completed       map[int]Task
+	mapPhaseData    PhaseData
+	reducePhaseData PhaseData
 }
 
 type TaskWorker struct {
@@ -37,17 +45,31 @@ type TaskWorker struct {
 	task     Task
 }
 
-// func (c *Coordinator) () {
-// }
-
-// Your code here -- RPC handlers for the worker to call.
-
 // an example RPC handler.
 //
 // the RPC argument and reply types are defined in rpc.go.
 func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
+}
+
+func (c *Coordinator) PrintTaskReport() {
+	var phaseString string
+	var totalTasks int
+	switch c.phase {
+	case COORDINATOR_INIT_PHASE:
+		phaseString = "Phase: Init"
+	case COORDINATOR_MAP_PHASE:
+		phaseString = "Phase: Map"
+		totalTasks = c.mapPhaseData.numberOfTotalTasks
+	case COORDINATOR_REDUCE_PHASE:
+		phaseString = "Phase: Reduce"
+		totalTasks = c.reducePhaseData.numberOfTotalTasks
+	case COORDINATOR_COMPLETE_PHASE:
+		phaseString = "Phase: Complete"
+	}
+	fmt.Printf("%s --- To Do: %d, In Progress: %d, Completed: %d, Total: %d\n",
+		phaseString, len(c.toDo), len(c.inProgress), len(c.completed), totalTasks)
 }
 
 func (c *Coordinator) Register(args *interface{}, reply *RegisterReply) error {
@@ -98,7 +120,7 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		}
 		delete(c.toDo, i)
 
-		fmt.Printf("task %v\n", t.(MapTask).id)
+		//fmt.Printf("task %v\n", t.(MapTask).id)
 
 		// Reply to worker
 		reply.WorkerId = args.WorkerId
@@ -121,6 +143,7 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 	case REDUCE_TASK_TYPE:
 	}
 
+	c.PrintTaskReport()
 	return nil
 }
 
@@ -137,8 +160,8 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 	switch args.TaskType {
 	case MAP_TASK_TYPE:
 		// Task report
-		fmt.Printf("Report: WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
-		fmt.Printf("Report: Progress %v, Complete %v \n", args.Progress, args.Complete)
+		fmt.Printf("TaskStatus: WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
+		fmt.Printf("TaskStatus: Progress %v, Complete %v \n", args.Progress, args.Complete)
 
 		// Complete
 		if args.Complete {
@@ -147,20 +170,16 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 
 			t, ok := c.inProgress[args.MapTaskId]
 			if !ok {
-				log.Printf("GetTask (Coordinator): Missing task at index %v", args.MapTaskId)
+				log.Printf("TaskStatus (Coordinator): Missing task at index %v", args.MapTaskId)
 				err := fmt.Errorf("Task tracking error")
 				return err
 			}
 
 			// Remove from inProgress
 			delete(c.inProgress, args.MapTaskId)
-			fmt.Println("In Progress:")
-			fmt.Println(c.inProgress)
 
 			// Add to completed
 			c.completed[args.MapTaskId] = t
-			fmt.Println("Completed:")
-			fmt.Println(c.completed)
 
 			// Update worker state
 			c.workers[args.WorkerId] = TaskWorker{
@@ -183,13 +202,14 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 		log.Printf("TaskStatus: Unknown TaskType %v\n", args.TaskType)
 	}
 
+	c.PrintTaskReport()
 	return nil
 }
 
 func (c *Coordinator) InitTasks(files []string) error {
+	c.mapPhaseData.numberOfTotalTasks = len(files)
 	// Calculate input slices
 	fmt.Println("MakeCoordinator (Coordinator): Calculating files...")
-	fmt.Printf("Number of files: %d\n", len(files))
 	fmt.Println("MakeCoordinator (Coordinator): Creating tasks...")
 	for i, filename := range files {
 		//fmt.Printf("id: %d, file %v\n", i, filename)
@@ -225,8 +245,8 @@ func (c *Coordinator) InitTasks(files []string) error {
 		//	//}
 
 	}
-	//fmt.Println("ToDo:", c.toDo)
 
+	c.PrintTaskReport()
 	return nil
 }
 

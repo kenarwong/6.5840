@@ -9,6 +9,7 @@ const MAP_TASK_TYPE = 1
 const REDUCE_TASK_TYPE = 2
 
 type Task interface {
+	Id() int
 	TaskType() int
 }
 
@@ -31,6 +32,10 @@ type MapTask struct {
 	completed       bool
 }
 
+func (t MapTask) Id() int {
+	return t.id
+}
+
 func (t MapTask) TaskType() int {
 	return MAP_TASK_TYPE
 }
@@ -43,6 +48,10 @@ type ReduceTask struct {
 	lastUpdatedTime time.Time
 	endTime         time.Time
 	completed       bool
+}
+
+func (t ReduceTask) Id() int {
+	return t.id
 }
 
 func (t ReduceTask) TaskType() int {

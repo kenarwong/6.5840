@@ -6,15 +6,21 @@ import (
 	"hash/fnv"
 	"io"
 	"log"
-	"math"
 	"net/rpc"
 	"os"
 	"sort"
 )
 
-var workerId int
-var task Task
-var progress int
+type WorkerData struct {
+	workerId int
+	task     Task
+	progress int
+
+	mapf    func(string, string) []KeyValue
+	reducef func(string, []string) string
+}
+
+var workerData WorkerData
 
 const outputDir = "mr-out"
 const tmpDir = "mr-tmp"
@@ -45,8 +51,8 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	mapf = mapf
-	//reducef = reducef
+	workerData.mapf = mapf
+	workerData.reducef = reducef
 
 	// Worker is assigned an ID
 	err := Register()
@@ -61,7 +67,7 @@ func Worker(mapf func(string, string) []KeyValue,
 		return
 	}
 
-	if task != nil {
+	if workerData.task != nil {
 		// Worker begins task
 		Execute(mapf, reducef)
 
@@ -94,21 +100,10 @@ func Read(filename string) string {
 
 func Register() (err error) {
 
-	// declare an argument structure.
-	args := new(interface{})
-
-	// declare a reply structure.
-	reply := RegisterReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Register" tells the
-	// receiving server that we'd like to call
-	// the Register() method of struct Coordinator.
-	ok := call("Coordinator.Register", args, &reply)
+	args, replyPtr, unmarshal := MarshalRegisterCall()
+	ok := call("Coordinator.Register", args, replyPtr)
 	if ok {
-		//fmt.Printf("reply.workerId %v\n", reply.WorkerId)
-		workerId = reply.WorkerId
-
+		workerData.workerId = unmarshal()
 		return nil
 	} else {
 		fmt.Printf("call failed!\n")
@@ -120,40 +115,16 @@ func Register() (err error) {
 
 func GetTask() (err error) {
 
-	// declare an argument structure.
-	args := TaskArgs{WorkerId: workerId}
-
-	// declare a reply structure.
-	reply := TaskReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.GetTask" tells the
-	// receiving server that we'd like to call
-	// the GetTask() method of struct Coordinator.
-	ok := call("Coordinator.GetTask", &args, &reply)
+	argsPtr, replyPtr, unmarshal := MarshalGetTaskCall(workerData.workerId)
+	ok := call("Coordinator.GetTask", argsPtr, replyPtr)
 	if ok {
-		//fmt.Printf("reply.WorkerId %v\n", reply.WorkerId)
-		//fmt.Printf("reply.TaskType %v\n", reply.TaskType)
-		//fmt.Printf("reply.Filename %v\n", reply.Filename)
-		//fmt.Printf("reply.ReportInterval %v\n", reply.ReportInterval)
-		switch reply.TaskType {
-		case MAP_TASK_TYPE:
-			task = MapTask{
-				id: reply.MapTaskId,
-				inputSlice: InputSlice{
-					filename: reply.Filename,
-				},
-			}
-		case REDUCE_TASK_TYPE:
-		case NO_TASK_TYPE:
-			task = nil
-		default:
-			err := fmt.Errorf("invalid task type %v", reply.TaskType)
-			return err
+		err, workerData.task = unmarshal()
+		if err != nil {
+			log.Fatalf("GetTask (Worker): unmarshal failed")
 		}
 
 		// Reset progress
-		progress = 0
+		workerData.progress = 0
 
 		return nil
 	} else {
@@ -169,9 +140,9 @@ func Execute(mapf func(string, string) []KeyValue,
 	// If map task, Worker calls map
 	// If reduce task, Worker calls reduce
 
-	switch task.TaskType() {
+	switch workerData.task.TaskType() {
 	case MAP_TASK_TYPE:
-		filename := task.(MapTask).inputSlice.filename
+		filename := workerData.task.(MapTask).inputSlice.filename
 		content := Read(filename)
 
 		intermediate := mapf(filename, string(content))
@@ -196,7 +167,7 @@ func Execute(mapf func(string, string) []KeyValue,
 			// fmt.Printf("key: %v\n", key)
 			// fmt.Printf("ihash: %v\n", ihash(key))
 
-			oname := fmt.Sprintf(tmpPrefix+"%v-%v", task.(MapTask).id, ihash(key))
+			oname := fmt.Sprintf(tmpPrefix+"%v-%v", workerData.task.(MapTask).id, ihash(key))
 			ofile, _ := os.Create(tmpDir + "/" + oname)
 			enc := json.NewEncoder(ofile)
 
@@ -216,26 +187,12 @@ func Execute(mapf func(string, string) []KeyValue,
 			}
 
 			i = j
-			progress = int(math.Round(float64((i * 100) / len(intermediate))))
+			//progress = int(math.Round(float64((i * 100) / len(intermediate))))
 			//fmt.Printf("WorkerId: %v, TaskId: %v, Progress: %v\n", workerId, task.(MapTask).id, progress)
 		}
+		argsPtr, replyPtr, _ := MarshalTaskStatusCall(workerData.workerId, workerData.task.(MapTask), 100, true)
 
-		// Report complete
-		progress = 100
-
-		// declare an argument structure.
-		args := TaskStatusArgs{
-			WorkerId:  workerId,
-			TaskType:  task.(MapTask).TaskType(),
-			MapTaskId: task.(MapTask).id,
-			Progress:  progress,
-			Complete:  true,
-		}
-
-		// declare a reply structure.
-		reply := TaskStatusReply{}
-
-		ok := call("Coordinator.TaskStatus", &args, &reply)
+		ok := call("Coordinator.TaskStatus", argsPtr, replyPtr)
 		if ok {
 		} else {
 			fmt.Printf("call failed!\n")

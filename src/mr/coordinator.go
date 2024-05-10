@@ -17,7 +17,8 @@ import (
 const COORDINATOR_INIT_PHASE = 0
 const COORDINATOR_MAP_PHASE = 1
 const COORDINATOR_REDUCE_PHASE = 2
-const COORDINATOR_COMPLETE_PHASE = 3
+const COORDINATOR_CLEANUP_PHASE = 3
+const COORDINATOR_COMPLETE_PHASE = 4
 
 type PhaseData struct {
 	numberOfTotalTasks int
@@ -133,6 +134,8 @@ func (c *Coordinator) PrintTaskReport() {
 	case COORDINATOR_REDUCE_PHASE:
 		phaseString = "Phase: Reduce"
 		totalTasks = c.reducePhaseData.numberOfTotalTasks
+	case COORDINATOR_CLEANUP_PHASE:
+		phaseString = "Phase: Clean up"
 	case COORDINATOR_COMPLETE_PHASE:
 		phaseString = "Phase: Complete"
 	}
@@ -379,8 +382,20 @@ func (c *Coordinator) PhaseCheck() error {
 		// Check reduce slice completion status
 
 		// Change to complete phase when reduce phase complete
+		fmt.Println("PhaseCheck (Coordinator): Change to clean up phase")
+		c.phase = COORDINATOR_CLEANUP_PHASE
+
+		return nil
+	case COORDINATOR_CLEANUP_PHASE:
+		fmt.Println("PhaseCheck (Coordinator): Clean up phase")
+
+		// Check Worker Statuses
+		// Handle stragglers
+		// Emit Quit broadcast
+
+		// Change to complete phase when clean up phase complete
 		fmt.Println("PhaseCheck (Coordinator): Change to complete phase")
-		c.phase = COORDINATOR_COMPLETE_PHASE
+		c.phase = COORDINATOR_CLEANUP_PHASE
 
 		return nil
 	case COORDINATOR_COMPLETE_PHASE:

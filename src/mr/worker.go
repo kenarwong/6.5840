@@ -61,23 +61,9 @@ func ihash(key string) int {
 
 func WorkerLoop() {
 
-	// Goroutine: server to receive notifications from coordinator
-	// Tasks notification
-	// Task notification channel
-	// Quit signal
-	// Quit channel
-
-	// blocking loop
-	// receive channels for:
-	// notifications, quit, ticker
-
-	// infinite for
-
 	for {
 		select {
-		// select
-		// unbuffered channel for task notifications
-		// receivers block channels until it is ready
+
 		// task notification arrives on channel
 		// GetTask()
 		// perform task if not already active or failed
@@ -95,12 +81,13 @@ func WorkerLoop() {
 			}
 
 			// If task exists
-			// Worker is not already active or failed
+			// If worker is not already active or failed
 			if workerData.task != nil &&
 				workerData.state != WORKER_STATE_ACTIVE &&
 				workerData.state != WORKER_STATE_FAILED {
 
-				// Worker begins task
+				// Task in goroutine
+				// Task and Worker data should never be concurrently modified
 				go func() {
 					// Set active
 					workerData.state = WORKER_STATE_ACTIVE
@@ -112,6 +99,7 @@ func WorkerLoop() {
 					// To be performed on completion
 					defer func() {
 						workerData.state = WORKER_STATE_IDLE
+						workerData.report = nil
 						ReportStatus() // Force report on completion
 
 						// ***TEMP ABORT***
@@ -137,12 +125,6 @@ func WorkerLoop() {
 			time.Sleep(1 * time.Second)
 		}
 	}
-
-	// ticker every tick heartbeat
-	// if working on task, report status
-	// 		including complete status
-	// if not, report status anyways?
-
 }
 
 // main/mrworker.go calls this function.
@@ -162,6 +144,13 @@ func Worker(mapf func(string, string) []KeyValue,
 	if err != nil {
 		return
 	}
+
+	// Goroutine: worker server to receive notifications from coordinator
+	// Tasks notification
+	// Task notification channel
+	// Quit signal
+	// Quit channel
+	// Remove TEMP
 
 	go func() {
 		// ***TEMP TRIGGER***

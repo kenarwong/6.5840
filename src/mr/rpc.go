@@ -14,14 +14,22 @@ import (
 	"strconv"
 )
 
+type RegisterArgs struct {
+	// For broadcast
+	ClientAddress string
+}
+
 type RegisterReply struct {
 	WorkerId int
 }
 
-func MarshalRegisterCall() (interface{}, *RegisterReply, func() int) {
+func MarshalRegisterCall(clientAddress string) (*RegisterArgs, *RegisterReply, func() int) {
 
+	args := RegisterArgs{
+		ClientAddress: clientAddress,
+	}
 	reply := RegisterReply{}
-	return new(interface{}), &reply, func() int {
+	return &args, &reply, func() int {
 		return reply.WorkerId
 	}
 }

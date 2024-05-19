@@ -19,6 +19,9 @@ type WorkerData struct {
 	progress int
 	complete bool
 
+	// Broadcast client
+	clientAddress string
+
 	// Notification channels
 	notification chan int
 	report       <-chan time.Time
@@ -139,6 +142,9 @@ func Worker(mapf func(string, string) []KeyValue,
 		return
 	}
 
+	// Create Broadcast Listener
+	//CreateBroadcastListener()
+
 	// Goroutine: worker server to receive notifications from coordinator
 	// Tasks notification
 	// Task notification channel
@@ -159,7 +165,11 @@ func Worker(mapf func(string, string) []KeyValue,
 
 func (w *WorkerProcess) Register() (err error) {
 
-	args, replyPtr, unmarshal := MarshalRegisterCall()
+	// Get client address
+	sockName := broadcastClientSock()
+	w.workerData.clientAddress = sockName
+
+	args, replyPtr, unmarshal := MarshalRegisterCall(sockName)
 	ok := call("Coordinator.Register", args, replyPtr)
 	if ok {
 		w.workerData.workerId = unmarshal()

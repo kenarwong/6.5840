@@ -49,6 +49,7 @@ type TaskWorker struct {
 	state    int
 	taskType int
 	task     Task
+	address  string
 }
 
 func (c *Coordinator) AddUpdateWorker(w TaskWorker) {
@@ -143,8 +144,15 @@ func (c *Coordinator) PrintTaskReport() {
 		phaseString, len(c.toDo), len(c.inProgress), len(c.completed), totalTasks)
 }
 
-func (c *Coordinator) Register(args *interface{}, reply *RegisterReply) error {
+func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 	// Phase restrictions
+	switch c.phase {
+	case COORDINATOR_MAP_PHASE:
+	case COORDINATOR_REDUCE_PHASE:
+	default:
+		err := fmt.Errorf("invalid phase %v", c.phase)
+		return err
+	}
 
 	// Register worker ID
 	workerId := len(c.workers)
@@ -153,6 +161,7 @@ func (c *Coordinator) Register(args *interface{}, reply *RegisterReply) error {
 		state:    WORKER_STATE_IDLE,
 		taskType: NO_TASK_TYPE,
 		task:     nil,
+		address:  args.ClientAddress,
 	})
 	fmt.Printf("WorkerId %v registered.\n", workerId)
 
@@ -424,7 +433,11 @@ func (c *Coordinator) PhaseCheck() error {
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
+
 	//l, e := net.Listen("tcp", ":1234")
+	// Deliver to Worker on Register()
+	// Instead of relying on same address space
+
 	sockname := coordinatorSock()
 	os.Remove(sockname)
 	l, e := net.Listen("unix", sockname)

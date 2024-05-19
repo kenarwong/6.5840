@@ -231,7 +231,7 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 	return nil
 }
 
-func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) error {
+func (c *Coordinator) TaskReport(args *TaskStatusArgs, reply *TaskStatusReply) error {
 	// Phase restrictions
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
@@ -244,8 +244,8 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 	switch args.TaskType {
 	case MAP_TASK_TYPE:
 		// Task report
-		fmt.Printf("TaskStatus (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
-		fmt.Printf("TaskStatus (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
+		fmt.Printf("TaskReport (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
+		fmt.Printf("TaskReport (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
 
 		// Complete
 		if args.Complete {
@@ -253,7 +253,7 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 
 			t, ok := c.GetInProgressTask(args.MapTaskId)
 			if !ok {
-				log.Printf("TaskStatus (Coordinator): Missing task at index %v", args.MapTaskId)
+				log.Printf("TaskReport (Coordinator): Missing task at index %v", args.MapTaskId)
 				err := fmt.Errorf("Task tracking error")
 				return err
 			}
@@ -284,16 +284,15 @@ func (c *Coordinator) TaskStatus(args *TaskStatusArgs, reply *TaskStatusReply) e
 
 	case REDUCE_TASK_TYPE:
 	default:
-		log.Printf("TaskStatus (Coordinator): Unknown TaskType %v\n", args.TaskType)
+		log.Printf("TaskReport (Coordinator): Unknown TaskType %v\n", args.TaskType)
 	}
 	return nil
 }
 
-func (c *Coordinator) InitTasks(files []string) error {
+func (c *Coordinator) InitMapPhase(files []string) error {
 	c.mapPhaseData.numberOfTotalTasks = len(files)
 	// Calculate input slices
-	fmt.Println("MakeCoordinator (Coordinator): Calculating files...")
-	fmt.Println("MakeCoordinator (Coordinator): Creating tasks...")
+	fmt.Println("InitMapPhase (Coordinator): Creating tasks...")
 	for i, filename := range files {
 		//fmt.Printf("id: %d, file %v\n", i, filename)
 
@@ -327,6 +326,19 @@ func (c *Coordinator) InitTasks(files []string) error {
 		//	//	}
 		//	//}
 
+	}
+
+	c.PrintTaskReport()
+	return nil
+}
+
+func (c *Coordinator) InitReducePhase() error {
+	fmt.Println("InitMapPhase (Coordinator): Creating tasks...")
+	for i := 0; i < c.reducePhaseData.numberOfTotalTasks; i++ {
+		t := ReduceTask{
+			id: i,
+		}
+		c.AddToDoTask(t)
 	}
 
 	c.PrintTaskReport()
@@ -372,6 +384,7 @@ func (c *Coordinator) PhaseCheck() error {
 			// Change to reduce phase
 			fmt.Println("PhaseCheck (Coordinator): Change to reduce phase")
 			c.phase = COORDINATOR_REDUCE_PHASE
+			c.InitReducePhase()
 		}
 
 		return nil
@@ -395,7 +408,7 @@ func (c *Coordinator) PhaseCheck() error {
 
 		// Change to complete phase when clean up phase complete
 		fmt.Println("PhaseCheck (Coordinator): Change to complete phase")
-		c.phase = COORDINATOR_CLEANUP_PHASE
+		c.phase = COORDINATOR_COMPLETE_PHASE
 
 		return nil
 	case COORDINATOR_COMPLETE_PHASE:
@@ -440,8 +453,10 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		phase:      COORDINATOR_INIT_PHASE,
-		nReduce:    nReduce,
+		phase: COORDINATOR_INIT_PHASE,
+		reducePhaseData: PhaseData{
+			numberOfTotalTasks: nReduce,
+		},
 		workers:    make(map[int]TaskWorker),
 		toDo:       make(map[int]Task),
 		inProgress: make(map[int]Task),
@@ -449,7 +464,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	// Initialize tasks
-	c.InitTasks(files)
+	c.InitMapPhase(files)
 
 	// Start RPC server
 	c.phase = COORDINATOR_MAP_PHASE

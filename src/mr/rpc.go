@@ -66,7 +66,7 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 	}
 }
 
-type TaskStatusArgs struct {
+type StatusReportArgs struct {
 	WorkerId     int
 	TaskType     int
 	MapTaskId    int
@@ -75,18 +75,18 @@ type TaskStatusArgs struct {
 	Complete     bool
 }
 
-type TaskStatusReply struct {
+type StatusReportReply struct {
 }
 
-func MarshalTaskStatusCall(workerId int, task Task, progress int, complete bool) (*TaskStatusArgs, *TaskStatusReply, func()) {
-	args := TaskStatusArgs{
+func MarshalStatusReportCall(workerId int, task Task, progress int, complete bool) (*TaskStatusArgs, *TaskStatusReply, func()) {
+	args := StatusReportArgs{
 		WorkerId:  workerId,
 		TaskType:  task.TaskType(),
 		MapTaskId: task.Id(),
 		Progress:  progress,
 		Complete:  complete,
 	}
-	reply := TaskStatusReply{}
+	reply := StatusReportReply{}
 	return &args, &reply, func() {
 		// Placeholder
 	}

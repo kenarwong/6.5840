@@ -100,9 +100,11 @@ func WorkerLoop() {
 					defer func() {
 						workerData.state = WORKER_STATE_IDLE
 						workerData.report = nil
-						ReportStatus() // Force report on completion
+						fmt.Printf("WorkerLoop: WorkerId %v: Completion report\n", workerData.workerId)
+						StatusReport() // Force report on completion
 
 						// ***TEMP ABORT***
+						// Replace with coordinator notification
 						workerData.quit <- true
 					}()
 
@@ -115,8 +117,8 @@ func WorkerLoop() {
 			}
 		case <-workerData.report:
 			if workerData.state == WORKER_STATE_ACTIVE {
-				//fmt.Printf("WorkerLoop: WorkerId %v: Active report\n", workerData.workerId)
-				ReportStatus()
+				fmt.Printf("WorkerLoop: WorkerId %v: Active report\n", workerData.workerId)
+				StatusReport()
 			}
 		case <-workerData.quit:
 			fmt.Printf("WorkerLoop: WorkerId %v: Quit\n", workerData.workerId)
@@ -154,6 +156,7 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	go func() {
 		// ***TEMP TRIGGER***
+		// Replace with coordinator notification
 		time.Sleep(5 * time.Second)
 		workerData.notification <- 1
 	}()
@@ -290,6 +293,7 @@ func Execute() (err error) {
 			workerData.progress = int(math.Round(float64((i * 100) / len(intermediate))))
 
 			// *** TEMP FAKE DELAY ***
+			// To demonstrate progress
 			time.Sleep(1 * time.Millisecond)
 		}
 		workerData.complete = true // Officially mark as complete (as opposed to regular reporting)
@@ -303,13 +307,13 @@ func Execute() (err error) {
 	return nil
 }
 
-func ReportStatus() {
-	//fmt.Printf("ReportStatus: WorkerId: %v, TaskId: %v, Progress: %v, Complete: %t\n",
+func StatusReport() {
+	//fmt.Printf("StatusReport: WorkerId: %v, TaskId: %v, Progress: %v, Complete: %t\n",
 	//	workerData.workerId, workerData.task.Id(), workerData.progress, workerData.complete)
 
-	argsPtr, replyPtr, _ := MarshalTaskStatusCall(workerData.workerId, workerData.task, workerData.progress, workerData.complete)
+	argsPtr, replyPtr, _ := MarshalStatusReportCall(workerData.workerId, workerData.task, workerData.progress, workerData.complete)
 
-	ok := call("Coordinator.TaskStatus", argsPtr, replyPtr)
+	ok := call("Coordinator.", argsPtr, replyPtr)
 	if ok {
 	} else {
 		fmt.Printf("call failed!\n")

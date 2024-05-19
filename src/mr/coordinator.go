@@ -231,7 +231,7 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 	return nil
 }
 
-func (c *Coordinator) TaskReport(args *TaskStatusArgs, reply *TaskStatusReply) error {
+func (c *Coordinator) StatusReport(args *StatusReportArgs, reply *StatusReportReply) error {
 	// Phase restrictions
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
@@ -244,8 +244,8 @@ func (c *Coordinator) TaskReport(args *TaskStatusArgs, reply *TaskStatusReply) e
 	switch args.TaskType {
 	case MAP_TASK_TYPE:
 		// Task report
-		fmt.Printf("TaskReport (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
-		fmt.Printf("TaskReport (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
+		fmt.Printf("StatusReport (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
+		fmt.Printf("StatusReport (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
 
 		// Complete
 		if args.Complete {
@@ -253,7 +253,7 @@ func (c *Coordinator) TaskReport(args *TaskStatusArgs, reply *TaskStatusReply) e
 
 			t, ok := c.GetInProgressTask(args.MapTaskId)
 			if !ok {
-				log.Printf("TaskReport (Coordinator): Missing task at index %v", args.MapTaskId)
+				log.Printf("StatusReport (Coordinator): Missing task at index %v", args.MapTaskId)
 				err := fmt.Errorf("Task tracking error")
 				return err
 			}
@@ -284,7 +284,7 @@ func (c *Coordinator) TaskReport(args *TaskStatusArgs, reply *TaskStatusReply) e
 
 	case REDUCE_TASK_TYPE:
 	default:
-		log.Printf("TaskReport (Coordinator): Unknown TaskType %v\n", args.TaskType)
+		log.Printf("StatusReport (Coordinator): Unknown TaskType %v\n", args.TaskType)
 	}
 	return nil
 }

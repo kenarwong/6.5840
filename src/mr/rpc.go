@@ -8,6 +8,8 @@ package mr
 
 import (
 	"fmt"
+	"log"
+	"net/rpc"
 	"os"
 	"strconv"
 )
@@ -39,7 +41,7 @@ type TaskReply struct {
 
 func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Task)) {
 	reply := TaskReply{}
-	return &TaskArgs{WorkerId: workerData.workerId}, &reply, func() (error, Task) {
+	return &TaskArgs{WorkerId: workerId}, &reply, func() (error, Task) {
 		var task Task
 
 		// fmt.Printf("MarshalGetTaskCall: reply.TaskType %v\n", reply.TaskType)
@@ -78,7 +80,7 @@ type StatusReportArgs struct {
 type StatusReportReply struct {
 }
 
-func MarshalStatusReportCall(workerId int, task Task, progress int, complete bool) (*TaskStatusArgs, *TaskStatusReply, func()) {
+func MarshalStatusReportCall(workerId int, task Task, progress int, complete bool) (*StatusReportArgs, *StatusReportReply, func()) {
 	args := StatusReportArgs{
 		WorkerId:  workerId,
 		TaskType:  task.TaskType(),
@@ -115,4 +117,26 @@ func coordinatorSock() string {
 	s := "/var/tmp/5840-mr-"
 	s += strconv.Itoa(os.Getuid())
 	return s
+}
+
+// send an RPC request to the coordinator, wait for the response.
+// usually returns true.
+// returns false if something goes wrong.
+func call(rpcname string, args interface{}, reply interface{}) bool {
+	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	sockname := coordinatorSock()
+	c, err := rpc.DialHTTP("unix", sockname)
+	if err != nil {
+		//log.Fatal("dialing:", err)
+		log.Printf("dialing: %v\n", err)
+	}
+	defer c.Close()
+
+	err = c.Call(rpcname, args, reply)
+	if err != nil {
+		log.Printf("error: %v\n", err)
+		return false
+	}
+
+	return true
 }

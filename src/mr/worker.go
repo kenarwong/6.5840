@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"io"
 	"log"
 	"math"
-	"net/rpc"
 	"os"
 	"sort"
 	"time"
@@ -31,25 +29,13 @@ type WorkerData struct {
 	reducef func(string, []string) string
 }
 
-var workerData WorkerData
+type WorkerProcess struct {
+	workerData WorkerData
+}
 
 const outputDir = "mr-out"
 const tmpDir = "mr-tmp"
 const tmpPrefix = "mrtmp."
-
-// for sorting by key.
-type ByKey []KeyValue
-
-// for sorting by key.
-func (a ByKey) Len() int           { return len(a) }
-func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
-
-// Map functions return a slice of KeyValue.
-type KeyValue struct {
-	Key   string
-	Value string
-}
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -59,7 +45,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func WorkerLoop() {
+func (w *WorkerProcess) WorkerLoop() {
 
 	for {
 		select {
@@ -71,57 +57,61 @@ func WorkerLoop() {
 		// non-blocking Execute, so we can continue producing heartbeats
 		// defer set non-active status
 
-		case <-workerData.notification:
-			fmt.Printf("WorkerLoop: WorkerId %v: Notification received.\n", workerData.workerId)
+		case <-w.workerData.notification:
+			fmt.Printf("WorkerLoop: WorkerId %v: Notification received.\n", w.workerData.workerId)
 
 			// Worker gets task from Coordinator
-			err := GetTask()
+			err := w.GetTask()
 			if err != nil {
-				workerData.state = WORKER_STATE_FAILED
+				w.workerData.state = WORKER_STATE_FAILED
 			}
 
 			// If task exists
 			// If worker is not already active or failed
-			if workerData.task != nil &&
-				workerData.state != WORKER_STATE_ACTIVE &&
-				workerData.state != WORKER_STATE_FAILED {
+			if w.workerData.task != nil &&
+				w.workerData.state != WORKER_STATE_ACTIVE &&
+				w.workerData.state != WORKER_STATE_FAILED {
 
 				// Task in goroutine
 				// Task and Worker data should never be concurrently modified
 				go func() {
 					// Set active
-					workerData.state = WORKER_STATE_ACTIVE
+					w.workerData.state = WORKER_STATE_ACTIVE
 
 					// Update channel with new ticker
-					ticker := time.NewTicker(time.Duration(workerData.task.GetReportInterval()) * time.Millisecond)
-					workerData.report = ticker.C
+					ticker := time.NewTicker(time.Duration(w.workerData.task.GetReportInterval()) * time.Millisecond)
+					w.workerData.report = ticker.C
 
 					// To be performed on completion
 					defer func() {
-						workerData.state = WORKER_STATE_IDLE
-						workerData.report = nil
-						fmt.Printf("WorkerLoop: WorkerId %v: Completion report\n", workerData.workerId)
-						StatusReport() // Force report on completion
+						w.workerData.state = WORKER_STATE_IDLE
+						w.workerData.report = nil
+						//fmt.Printf("WorkerLoop: WorkerId %v: Completion report\n", w.workerData.workerId)
+						w.StatusReport() // Force report on completion
 
 						// ***TEMP ABORT***
 						// Replace with coordinator notification
-						workerData.quit <- true
+						w.workerData.quit <- true
 					}()
 
-					err := Execute()
+					err := w.Execute()
 					if err != nil {
-						workerData.state = WORKER_STATE_FAILED
-						workerData.report = nil
+						w.workerData.state = WORKER_STATE_FAILED
+						w.workerData.report = nil
 					}
 				}()
 			}
-		case <-workerData.report:
-			if workerData.state == WORKER_STATE_ACTIVE {
-				fmt.Printf("WorkerLoop: WorkerId %v: Active report\n", workerData.workerId)
-				StatusReport()
+		case <-w.workerData.report:
+			if w.workerData.state == WORKER_STATE_ACTIVE {
+				// TODO: This still sometimes reports a complete status before the task is actually complete
+				// TODO: May need mutex on complete status, to report complete = False even if progress is at 100%
+				// TODO: Only completion report should send complete = true
+
+				//fmt.Printf("WorkerLoop: WorkerId %v: Active report\n", w.workerData.workerId)
+				w.StatusReport()
 			}
-		case <-workerData.quit:
-			fmt.Printf("WorkerLoop: WorkerId %v: Quit\n", workerData.workerId)
+		case <-w.workerData.quit:
+			fmt.Printf("WorkerLoop: WorkerId %v: Quit\n", w.workerData.workerId)
 			return
 		default:
 			time.Sleep(1 * time.Second)
@@ -133,16 +123,18 @@ func WorkerLoop() {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	workerData = WorkerData{
-		state:        WORKER_STATE_IDLE,
-		mapf:         mapf,
-		reducef:      reducef,
-		notification: make(chan int),
-		quit:         make(chan bool),
+	worker := WorkerProcess{
+		workerData: WorkerData{
+			state:        WORKER_STATE_IDLE,
+			mapf:         mapf,
+			reducef:      reducef,
+			notification: make(chan int),
+			quit:         make(chan bool),
+		},
 	}
 
 	// Worker is assigned an ID
-	err := Register()
+	err := worker.Register()
 	if err != nil {
 		return
 	}
@@ -158,36 +150,20 @@ func Worker(mapf func(string, string) []KeyValue,
 		// ***TEMP TRIGGER***
 		// Replace with coordinator notification
 		time.Sleep(5 * time.Second)
-		workerData.notification <- 1
+		worker.workerData.notification <- 1
 	}()
 
 	// Start Worker Loop
-	WorkerLoop()
+	worker.WorkerLoop()
 }
 
-func Read(filename string) string {
-
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatalf("cannot open %v", filename)
-	}
-
-	content, err := io.ReadAll(file)
-	if err != nil {
-		log.Fatalf("cannot read %v", filename)
-	}
-	file.Close()
-
-	return string(content)
-}
-
-func Register() (err error) {
+func (w *WorkerProcess) Register() (err error) {
 
 	args, replyPtr, unmarshal := MarshalRegisterCall()
 	ok := call("Coordinator.Register", args, replyPtr)
 	if ok {
-		workerData.workerId = unmarshal()
-		fmt.Printf("Register: WorkerId %v registered.\n", workerData.workerId)
+		w.workerData.workerId = unmarshal()
+		fmt.Printf("Register: WorkerId %v registered.\n", w.workerData.workerId)
 
 		return nil
 	} else {
@@ -198,25 +174,25 @@ func Register() (err error) {
 	}
 }
 
-func GetTask() (err error) {
-	fmt.Printf("GetTask: WorkerId %v.\n", workerData.workerId)
+func (w *WorkerProcess) GetTask() (err error) {
+	fmt.Printf("GetTask: WorkerId %v.\n", w.workerData.workerId)
 
-	argsPtr, replyPtr, unmarshal := MarshalGetTaskCall(workerData.workerId)
+	argsPtr, replyPtr, unmarshal := MarshalGetTaskCall(w.workerData.workerId)
 	ok := call("Coordinator.GetTask", argsPtr, replyPtr)
 	if ok {
-		err, workerData.task = unmarshal()
+		err, w.workerData.task = unmarshal()
 		if err != nil {
 			log.Fatalf("GetTask (Worker): unmarshal failed")
 		}
 
 		// If new task is available
-		if workerData.task != nil {
-			workerData.taskType = workerData.task.TaskType()
-			workerData.progress = 0     // Reset progress
-			workerData.complete = false // Reset complete
+		if w.workerData.task != nil {
+			w.workerData.taskType = w.workerData.task.TaskType()
+			w.workerData.progress = 0     // Reset progress
+			w.workerData.complete = false // Reset complete
 		} else {
-			workerData.taskType = NO_TASK_TYPE
-			fmt.Printf("GetTask (WorkerId %v): No tasks available.\n", workerData.workerId)
+			w.workerData.taskType = NO_TASK_TYPE
+			fmt.Printf("GetTask (WorkerId %v): No tasks available.\n", w.workerData.workerId)
 		}
 
 		return nil
@@ -228,17 +204,17 @@ func GetTask() (err error) {
 	}
 }
 
-func Execute() (err error) {
-	//fmt.Printf("Execute: WorkerId %v.\n", workerData.workerId)
+func (w *WorkerProcess) Execute() (err error) {
+	//fmt.Printf("Execute: WorkerId %v.\n", w.workerData.workerId)
 	// If map task, Worker calls map
 	// If reduce task, Worker calls reduce
 
-	switch workerData.taskType {
+	switch w.workerData.taskType {
 	case MAP_TASK_TYPE:
-		filename := workerData.task.(MapTask).inputSlice.filename
+		filename := w.workerData.task.(MapTask).inputSlice.filename
 		content := Read(filename)
 
-		intermediate := workerData.mapf(filename, string(content))
+		intermediate := w.workerData.mapf(filename, string(content))
 
 		//intermediate := []KeyValue{}
 		//intermediate = append(intermediate, kva...)
@@ -263,7 +239,7 @@ func Execute() (err error) {
 			// fmt.Printf("key: %v\n", key)
 			// fmt.Printf("ihash: %v\n", ihash(key))
 
-			oname := fmt.Sprintf(tmpPrefix+"%v-%v", workerData.task.Id(), ihash(key))
+			oname := fmt.Sprintf(tmpPrefix+"%v-%v", w.workerData.task.Id(), ihash(key))
 			filename := tmpDir + "/" + oname
 			ofile, err := os.Create(filename)
 			if err != nil {
@@ -290,30 +266,31 @@ func Execute() (err error) {
 			i = j
 
 			// Update progress
-			workerData.progress = int(math.Round(float64((i * 100) / len(intermediate))))
+			w.workerData.progress = int(math.Round(float64((i * 100) / len(intermediate))))
 
 			// *** TEMP FAKE DELAY ***
 			// To demonstrate progress
 			time.Sleep(1 * time.Millisecond)
 		}
-		workerData.complete = true // Officially mark as complete (as opposed to regular reporting)
-		fmt.Printf("Execute (Worker): WorkerId: %v, TaskId: %v, Complete: %v\n", workerData.workerId, workerData.task.Id(), workerData.complete)
+		w.workerData.complete = true // Officially mark as complete (as opposed to regular reporting)
+		fmt.Printf("Execute (Worker): WorkerId: %v, TaskId: %v, Complete: %v\n",
+			w.workerData.workerId, w.workerData.task.Id(), w.workerData.complete)
 
 	case REDUCE_TASK_TYPE:
 		//content := Read(task.(MapTask).inputSlice.filename)
-		//workerData.reducef(task.(MapTask).inputSlice.filename, content)
+		//w.workerData.reducef(task.(MapTask).inputSlice.filename, content)
 	}
 
 	return nil
 }
 
-func StatusReport() {
+func (w *WorkerProcess) StatusReport() {
 	//fmt.Printf("StatusReport: WorkerId: %v, TaskId: %v, Progress: %v, Complete: %t\n",
-	//	workerData.workerId, workerData.task.Id(), workerData.progress, workerData.complete)
+	//	w.workerData.workerId, workerData.task.Id(), workerData.progress, workerData.complete)
 
-	argsPtr, replyPtr, _ := MarshalStatusReportCall(workerData.workerId, workerData.task, workerData.progress, workerData.complete)
+	argsPtr, replyPtr, _ := MarshalStatusReportCall(w.workerData.workerId, w.workerData.task, w.workerData.progress, w.workerData.complete)
 
-	ok := call("Coordinator.", argsPtr, replyPtr)
+	ok := call("Coordinator.StatusReport", argsPtr, replyPtr)
 	if ok {
 	} else {
 		fmt.Printf("call failed!\n")
@@ -345,26 +322,4 @@ func CallExample() {
 	} else {
 		fmt.Printf("call failed!\n")
 	}
-}
-
-// send an RPC request to the coordinator, wait for the response.
-// usually returns true.
-// returns false if something goes wrong.
-func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
-	if err != nil {
-		//log.Fatal("dialing:", err)
-		log.Printf("dialing: %v\n", err)
-	}
-	defer c.Close()
-
-	err = c.Call(rpcname, args, reply)
-	if err != nil {
-		log.Printf("error: %v\n", err)
-		return false
-	}
-
-	return true
 }

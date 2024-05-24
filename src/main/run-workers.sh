@@ -10,9 +10,10 @@ if [ -z "$MR_MAPPER" ]; then
 fi
 
 TMPDIR=mr-tmp
-if [ ! -d "mr-tmp" ]; then
-  mkdir $TMPDIR
-fi
+[ -d "mr-tmp" ] || mkdir $TMPDIR
+#if [ ! -d "mr-tmp" ]; then
+#  mkdir $TMPDIR
+#fi
 
 EMPTYDIR=$(find $TMPDIR -type d -empty)
 if [ -e $TMPDIR ] && [ -z $EMPTYDIR ]; then

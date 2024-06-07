@@ -4,9 +4,11 @@ import (
 	"time"
 )
 
-const NO_TASK_TYPE = 0
-const MAP_TASK_TYPE = 1
-const REDUCE_TASK_TYPE = 2
+const (
+	NO_TASK_TYPE = iota
+	MAP_TASK_TYPE
+	REDUCE_TASK_TYPE
+)
 
 const WORKER_STATE_IDLE = 0
 const WORKER_STATE_ACTIVE = 1

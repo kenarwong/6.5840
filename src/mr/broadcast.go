@@ -14,7 +14,8 @@ const TASKS_AVAILABLE_NOTIFICATION = 1
 const QUIT_NOTIFICATION = 15
 
 func UnixSocketExample() {
-	// This method handles client connections in a separate goroutine.
+	// This function handles client connections in a separate goroutine.
+	// Uses Accept() to block and wait for incoming connections.
 
 	// Create a Unix domain socket and listen for incoming connections.
 	socket, err := net.Listen("unix", "/tmp/echo.sock")
@@ -59,8 +60,7 @@ func UnixSocketExample() {
 	}
 }
 
-// Cook up a unique-ish UNIX-domain socket name
-// in /var/tmp, for broadcast.
+// Unique server socket address
 func broadcastServerSock() string {
 	s := "/var/tmp/5840-broadcast-server"
 	s += strconv.Itoa(os.Getuid())
@@ -77,14 +77,17 @@ func broadcastClientSock() string {
 }
 
 func CreateBroadcastSocket(clientAddresses []*string) (map[string]chan int, error) {
+	// Connection-less Unix domain socket
+	// Takes an array of client socket paths and writes broadcasts a message out to all of them
 
-	serverFilename := broadcastServerSock()
+	serverPath := broadcastServerSock()
 
-	// Ensure the client socket file does not already exist
-	os.Remove(serverFilename)
+	// Ensure the server socket file does not already exist
+	// os.Remove(serverFilename)
+	syscall.Unlink(serverPath)
 
-	// Create a Unix domain socket using the client filename
-	serverAddr, err := net.ResolveUnixAddr("unixgram", serverFilename)
+	// Create a Unix domain socket using the server filename
+	serverAddr, err := net.ResolveUnixAddr("unixgram", serverPath)
 	if err != nil {
 		log.Fatalf("Failed to resolve server address: %v", err)
 		return nil, err
@@ -107,7 +110,7 @@ func CreateBroadcastSocket(clientAddresses []*string) (map[string]chan int, erro
 			serverConn.Close()
 
 			// Clean up the client socket file
-			os.Remove(serverFilename)
+			os.Remove(serverPath)
 		}()
 
 		for {
@@ -152,46 +155,56 @@ func CreateBroadcastSocket(clientAddresses []*string) (map[string]chan int, erro
 	}, nil
 }
 
-func CreateBroadcastListener(c chan []byte, clientAddress string) error {
-	clientFilename := clientAddress // This is a unique Unix domain socket file
-
+func CreateBroadcastListener(clientPath string) (map[string]chan int, error) {
 	// Ensure the client socket file does not already exist
-	os.Remove(clientFilename)
+	//os.Remove(clientFilename)
+	syscall.Unlink(clientPath)
 
 	// Create a Unix domain socket
-	clientAddr, err := net.ResolveUnixAddr("unixgram", clientFilename)
+	clientAddr, err := net.ResolveUnixAddr("unixgram", clientPath)
 	if err != nil {
 		log.Fatalf("Failed to resolve client address: %v", err)
-		return err
+		return nil, err
 	}
 
 	// Create the Unix domain socket connection
 	conn, err := net.ListenUnixgram("unixgram", clientAddr)
 	if err != nil {
 		log.Fatalf("Failed to create Unix domain socket: %v", err)
-		return err
+		return nil, err
 	}
+
+	// Client control channels
+	c := make(chan int)
+	quit := make(chan int)
 
 	go func() {
 		defer func() {
 			conn.Close()
 
 			// Clean up the client socket file
-			os.Remove(clientFilename)
+			os.Remove(clientPath)
 		}()
 
 		for {
+			select {
+			case <-quit:
+				break
+			default:
+				// Buffer to read the message from the server
+				buf := make([]byte, 1024)
+				n, err := conn.Read(buf)
+				if err != nil {
+					log.Fatalf("Failed to read from Unix domain socket: %v", err)
+				}
 
-			// Buffer to read the message from the server
-			buf := make([]byte, 1024)
-			n, err := conn.Read(buf)
-			if err != nil {
-				log.Fatalf("Failed to read from Unix domain socket: %v", err)
+				log.Printf("Received %d bytes: %s\n", n, string(buf[:n]))
 			}
-
-			log.Printf("Received %d bytes: %s\n", n, string(buf[:n]))
 		}
 	}()
 
-	return nil
+	return map[string]chan int{
+		"notification": c,
+		"quit":         quit,
+	}, nil
 }

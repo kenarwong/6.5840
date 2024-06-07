@@ -62,7 +62,7 @@ func UnixSocketExample() {
 
 // Unique server socket address
 func broadcastServerSock() string {
-	s := "/var/tmp/5840-broadcast-server"
+	s := "/var/tmp/5840-broadcast-server-"
 	s += strconv.Itoa(os.Getuid())
 	return s
 }
@@ -71,22 +71,24 @@ func broadcastServerSock() string {
 func broadcastClientSock() string {
 	s := "/var/tmp/5840-broadcast-client-"
 	s += strconv.Itoa(os.Getuid())
+	s += "-"
 	s += strconv.Itoa(os.Getpid())
 
 	return s
 }
 
-func CreateBroadcastSocket(clientAddresses []*string) (map[string]chan int, error) {
+func CreateBroadcastSocket(clientAddresses *[]string) (map[string]chan int, error) {
 	// Connection-less Unix domain socket
 	// Takes an array of client socket paths and writes broadcasts a message out to all of them
 
+	// Specify the server socket address
 	serverPath := broadcastServerSock()
 
 	// Ensure the server socket file does not already exist
 	// os.Remove(serverFilename)
 	syscall.Unlink(serverPath)
 
-	// Create a Unix domain socket using the server filename
+	// Create a unixgram domain socket using the server filename
 	serverAddr, err := net.ResolveUnixAddr("unixgram", serverPath)
 	if err != nil {
 		log.Fatalf("Failed to resolve server address: %v", err)
@@ -120,28 +122,30 @@ func CreateBroadcastSocket(clientAddresses []*string) (map[string]chan int, erro
 				var msg []byte
 				switch notification {
 				case TASKS_AVAILABLE_NOTIFICATION:
+					fmt.Println("Broadcast: Tasks available")
 					msg = []byte("Tasks available")
 				case QUIT_NOTIFICATION:
+					fmt.Println("Broadcast: Quit")
 					msg = []byte("Quit")
 				default:
 					log.Fatalf("Unknown notification: %v", notification)
 				}
 
-				for _, clientAddress := range clientAddresses {
+				for _, clientAddress := range *clientAddresses {
 					// Resolve the client address
 					// Clients can drop off and rejoin, so we need to resolve the address each time
-					clientUnixAddr, err := net.ResolveUnixAddr("unixgram", *clientAddress)
+					clientUnixAddr, err := net.ResolveUnixAddr("unixgram", clientAddress)
 					if err != nil {
 						log.Fatalf("Failed to resolve client address: %v", err)
-					}
-
-					// Send the message to each client over server connection
-					_, err = serverConn.WriteToUnix(msg, clientUnixAddr)
-					if err != nil {
-						log.Fatalf("Failed to write to Unix domain socket: %v", err)
+					} else {
+						// Send the message to each client over server connection
+						_, err = serverConn.WriteToUnix(msg, clientUnixAddr)
+						if err != nil {
+							log.Fatalf("Failed to write to Unix domain socket: %v", err)
+						}
 					}
 				}
-				log.Printf("Message sent: %s\n", msg)
+				//log.Printf("Message sent: %s\n", msg)
 			case <-quit:
 				fmt.Println("CreateBroadcastSocket: Quitting")
 				return
@@ -179,26 +183,26 @@ func CreateBroadcastListener(clientPath string) (map[string]chan int, error) {
 	quit := make(chan int)
 
 	go func() {
-		defer func() {
-			conn.Close()
-
-			// Clean up the client socket file
-			os.Remove(clientPath)
-		}()
 
 		for {
-			select {
-			case <-quit:
-				break
-			default:
-				// Buffer to read the message from the server
-				buf := make([]byte, 1024)
-				n, err := conn.Read(buf)
-				if err != nil {
-					log.Fatalf("Failed to read from Unix domain socket: %v", err)
-				}
+			// Buffer to read the message from the server
+			buf := make([]byte, 1024)
+			n, err := conn.Read(buf)
+			if err != nil {
+				log.Fatalf("Failed to read from Unix domain socket: %v", err)
+			}
 
-				log.Printf("Received %d bytes: %s\n", n, string(buf[:n]))
+			msg := string(buf[:n])
+
+			log.Printf("Received %d bytes: %s\n", n, msg)
+			switch msg {
+			case "Tasks available":
+				c <- TASKS_AVAILABLE_NOTIFICATION
+			case "Quit":
+				quit <- QUIT_NOTIFICATION
+				return
+			default:
+				log.Fatalf("Unknown message: %s", msg)
 			}
 		}
 	}()
@@ -207,4 +211,10 @@ func CreateBroadcastListener(clientPath string) (map[string]chan int, error) {
 		"notification": c,
 		"quit":         quit,
 	}, nil
+}
+
+func CleanUpBroadcastSocket(path string) {
+	// Clean up the socket file
+	fmt.Println("CreateBroadcastListener: Removing client socket")
+	os.Remove(path)
 }

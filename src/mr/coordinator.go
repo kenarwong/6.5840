@@ -14,6 +14,8 @@ import (
 // const INPUT_SLICE_SIZE_MB = 64
 // const INPUT_SLICE_SIZE_BYTES = 64 * 1024
 
+const MINIMUM_NUMBER_OF_WORKERS = 5
+
 const (
 	COORDINATOR_INIT_PHASE = iota
 	COORDINATOR_MAP_PHASE
@@ -27,7 +29,7 @@ type PhaseData struct {
 }
 
 type Coordinator struct {
-	// Your definitions here.
+	// Phase data
 	phase           int
 	nReduce         int
 	mapPhaseData    PhaseData
@@ -44,6 +46,10 @@ type Coordinator struct {
 	inProgress   map[int]Task
 	muCompleted  sync.Mutex
 	completed    map[int]Task
+
+	// Notification channels
+	clientAddresses   []string
+	broadcastChannels map[string]chan int
 }
 
 type TaskWorker struct {
@@ -117,6 +123,16 @@ func (c *Coordinator) RemoveCompletedTask(t Task) {
 	delete(c.completed, t.Id())
 }
 
+func (c *Coordinator) UpdateClientAddresses() {
+	c.muWorkers.Lock()
+	defer c.muWorkers.Unlock()
+	var addresses []string
+	for _, w := range c.workers {
+		addresses = append(addresses, w.address)
+	}
+	c.clientAddresses = addresses
+}
+
 // an example RPC handler.
 //
 // the RPC argument and reply types are defined in rpc.go.
@@ -149,8 +165,9 @@ func (c *Coordinator) PrintTaskReport() {
 func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 	// Phase restrictions
 	switch c.phase {
-	case COORDINATOR_MAP_PHASE:
-	case COORDINATOR_REDUCE_PHASE:
+	case COORDINATOR_INIT_PHASE:
+	// case COORDINATOR_MAP_PHASE:
+	// case COORDINATOR_REDUCE_PHASE:
 	default:
 		err := fmt.Errorf("invalid phase %v", c.phase)
 		return err
@@ -165,6 +182,10 @@ func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 		task:     nil,
 		address:  args.ClientAddress,
 	})
+
+	// Add client address
+	c.clientAddresses = append(c.clientAddresses, args.ClientAddress)
+
 	fmt.Printf("WorkerId %v registered.\n", workerId)
 
 	// Reply
@@ -356,6 +377,7 @@ func (c *Coordinator) InitReducePhase() error {
 	return nil
 }
 
+// Loop that keeps coordinator running until all tasks are complete
 func (c *Coordinator) StatusCheck() error {
 	for {
 		// Check status
@@ -373,9 +395,25 @@ func (c *Coordinator) StatusCheck() error {
 	return nil
 }
 
+// Check phase status and transitions when conditions are met
 func (c *Coordinator) PhaseCheck() error {
 	// Phase restrictions
 	switch c.phase {
+	case COORDINATOR_INIT_PHASE:
+		// Wait for workers to register
+		if len(c.workers) < MINIMUM_NUMBER_OF_WORKERS {
+			fmt.Printf("PhaseCheck (Coordinator): Waiting for workers to register. %v/%v\n", len(c.workers), MINIMUM_NUMBER_OF_WORKERS)
+			return nil
+		}
+
+		fmt.Println("PhaseCheck (Coordinator): Change to map phase")
+		c.phase = COORDINATOR_MAP_PHASE
+
+		// Broadcast tasks are available to workers
+		fmt.Println("PhaseCheck (Coordinator): Broadcast tasks available")
+		c.broadcastChannels["notification"] <- TASKS_AVAILABLE_NOTIFICATION
+
+		return nil
 	case COORDINATOR_MAP_PHASE:
 		//fmt.Println("PhaseCheck (Coordinator): Map phase")
 
@@ -396,6 +434,14 @@ func (c *Coordinator) PhaseCheck() error {
 			fmt.Println("PhaseCheck (Coordinator): Change to reduce phase")
 			c.phase = COORDINATOR_REDUCE_PHASE
 			c.InitReducePhase()
+
+			// How often should we check for stragglers?
+			// How often should we broadcast tasks are available?
+			// Update client addresses when clients drop off or come online
+			//} else if len(c.toDo) > 0 {
+
+			//for _, w := range(c.workers) {
+			//	if w.state == WORKER_STATE_IDLE {
 		}
 
 		return nil
@@ -413,9 +459,24 @@ func (c *Coordinator) PhaseCheck() error {
 	case COORDINATOR_CLEANUP_PHASE:
 		fmt.Println("PhaseCheck (Coordinator): Clean up phase")
 
+		// TODO
 		// Check Worker Statuses
 		// Handle stragglers
-		// Emit Quit broadcast
+		// Clean up client sockets for workers that are no longer responding
+
+		// Broadcast quit signal to workers
+		fmt.Println("PhaseCheck (Coordinator): Broadcast quit signal")
+		c.broadcastChannels["notification"] <- QUIT_NOTIFICATION
+
+		// Quit own broadcast
+		c.broadcastChannels["quit"] <- QUIT_NOTIFICATION
+
+		// Close channels
+		for _, ch := range c.broadcastChannels {
+			close(ch)
+		}
+
+		CleanUpBroadcastSocket(coordinatorSock())
 
 		// Change to complete phase when clean up phase complete
 		fmt.Println("PhaseCheck (Coordinator): Change to complete phase")
@@ -472,18 +533,27 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		reducePhaseData: PhaseData{
 			numberOfTotalTasks: nReduce,
 		},
-		workers:    make(map[int]TaskWorker),
-		toDo:       make(map[int]Task),
-		inProgress: make(map[int]Task),
-		completed:  make(map[int]Task),
+		workers:         make(map[int]TaskWorker),
+		toDo:            make(map[int]Task),
+		inProgress:      make(map[int]Task),
+		completed:       make(map[int]Task),
+		clientAddresses: []string{},
 	}
+
+	// Start broadcast socket
+	// Provide pointer for client address array (which will be updated by coordinator)
+	channels, err := CreateBroadcastSocket(&c.clientAddresses)
+	if err != nil {
+		log.Fatalf("error %v", err)
+	}
+	c.broadcastChannels = channels
 
 	// Initialize tasks
 	c.InitMapPhase(files)
 
 	// Start RPC server
-	c.phase = COORDINATOR_MAP_PHASE
 	go c.StatusCheck()
 	go c.server()
+
 	return &c
 }

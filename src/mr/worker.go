@@ -23,9 +23,8 @@ type WorkerData struct {
 	clientAddress string
 
 	// Notification channels
-	notification chan int
-	report       <-chan time.Time
-	quit         chan bool
+	report            <-chan time.Time
+	broadcastChannels map[string]chan int
 
 	// Map and Reduce functions
 	mapf    func(string, string) []KeyValue
@@ -60,49 +59,49 @@ func (w *WorkerProcess) WorkerLoop() {
 		// non-blocking Execute, so we can continue producing heartbeats
 		// defer set non-active status
 
-		case <-w.workerData.notification:
+		case <-w.workerData.broadcastChannels["notification"]:
 			fmt.Printf("WorkerLoop: WorkerId %v: Notification received.\n", w.workerData.workerId)
 
-			// Worker gets task from Coordinator
-			err := w.GetTask()
-			if err != nil {
-				w.workerData.state = WORKER_STATE_FAILED
-			}
-
-			// If task exists
 			// If worker is not already active or failed
-			if w.workerData.task != nil &&
-				w.workerData.state != WORKER_STATE_ACTIVE &&
+			if w.workerData.state != WORKER_STATE_ACTIVE &&
 				w.workerData.state != WORKER_STATE_FAILED {
 
-				// Task in goroutine
-				// Task and Worker data should never be concurrently modified
-				go func() {
-					// Set active
-					w.workerData.state = WORKER_STATE_ACTIVE
+				// Worker gets task from Coordinator
+				err := w.GetTask()
+				if err != nil {
+					w.workerData.state = WORKER_STATE_FAILED
+				}
 
-					// Update channel with new ticker
-					ticker := time.NewTicker(time.Duration(w.workerData.task.GetReportInterval()) * time.Millisecond)
-					w.workerData.report = ticker.C
+				// If task exists
+				if w.workerData.task != nil {
 
-					// To be performed on completion
-					defer func() {
-						w.workerData.state = WORKER_STATE_IDLE
-						w.workerData.report = nil
-						//fmt.Printf("WorkerLoop: WorkerId %v: Completion report\n", w.workerData.workerId)
-						w.StatusReport() // Force report on completion
+					// Execute task in goroutine
+					// Task and Worker data should never be concurrently modified
+					go func() {
+						// Set active
+						w.workerData.state = WORKER_STATE_ACTIVE
 
-						// ***TEMP ABORT***
-						// Replace with coordinator notification
-						w.workerData.quit <- true
+						// Update channel with new ticker
+						ticker := time.NewTicker(time.Duration(w.workerData.task.GetReportInterval()) * time.Millisecond)
+						w.workerData.report = ticker.C
+
+						// To be performed on completion
+						defer func() {
+							w.workerData.state = WORKER_STATE_IDLE
+							w.workerData.report = nil
+							//fmt.Printf("WorkerLoop: WorkerId %v: Completion report\n", w.workerData.workerId)
+							w.StatusReport() // Force report on completion
+						}()
+
+						err := w.Execute()
+						if err != nil {
+							w.workerData.state = WORKER_STATE_FAILED
+							w.workerData.report = nil
+						}
 					}()
-
-					err := w.Execute()
-					if err != nil {
-						w.workerData.state = WORKER_STATE_FAILED
-						w.workerData.report = nil
-					}
-				}()
+				}
+			} else {
+				fmt.Printf("WorkerLoop: WorkerId %v: Worker unavailable.\n", w.workerData.workerId)
 			}
 		case <-w.workerData.report:
 			if w.workerData.state == WORKER_STATE_ACTIVE {
@@ -113,8 +112,9 @@ func (w *WorkerProcess) WorkerLoop() {
 				//fmt.Printf("WorkerLoop: WorkerId %v: Active report\n", w.workerData.workerId)
 				w.StatusReport()
 			}
-		case <-w.workerData.quit:
-			fmt.Printf("WorkerLoop: WorkerId %v: Quit\n", w.workerData.workerId)
+		case <-w.workerData.broadcastChannels["quit"]:
+			fmt.Printf("WorkerLoop: WorkerId %v: Quit signal received\n", w.workerData.workerId)
+			w.CleanUp()
 			return
 		default:
 			time.Sleep(1 * time.Second)
@@ -128,11 +128,9 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	worker := WorkerProcess{
 		workerData: WorkerData{
-			state:        WORKER_STATE_IDLE,
-			mapf:         mapf,
-			reducef:      reducef,
-			notification: make(chan int),
-			quit:         make(chan bool),
+			state:   WORKER_STATE_IDLE,
+			mapf:    mapf,
+			reducef: reducef,
 		},
 	}
 
@@ -142,23 +140,6 @@ func Worker(mapf func(string, string) []KeyValue,
 		return
 	}
 
-	// Create Broadcast Listener
-	//CreateBroadcastListener()
-
-	// Goroutine: worker server to receive notifications from coordinator
-	// Tasks notification
-	// Task notification channel
-	// Quit signal
-	// Quit channel
-	// Remove TEMP
-
-	go func() {
-		// ***TEMP TRIGGER***
-		// Replace with coordinator notification
-		time.Sleep(5 * time.Second)
-		worker.workerData.notification <- 1
-	}()
-
 	// Start Worker Loop
 	worker.WorkerLoop()
 }
@@ -167,12 +148,20 @@ func (w *WorkerProcess) Register() (err error) {
 
 	// Get client address
 	sockName := broadcastClientSock()
-	w.workerData.clientAddress = sockName
 
 	args, replyPtr, unmarshal := MarshalRegisterCall(sockName)
 	ok := call("Coordinator.Register", args, replyPtr)
 	if ok {
 		w.workerData.workerId = unmarshal()
+
+		// Set up broadcast listener after registration
+		w.workerData.clientAddress = sockName
+		channels, err := CreateBroadcastListener(w.workerData.clientAddress)
+		if err != nil {
+			log.Fatalf("Failed to create broadcast listener: %v", err)
+		}
+		w.workerData.broadcastChannels = channels
+
 		fmt.Printf("Register: WorkerId %v registered.\n", w.workerData.workerId)
 
 		return nil
@@ -305,6 +294,16 @@ func (w *WorkerProcess) StatusReport() {
 	} else {
 		fmt.Printf("call failed!\n")
 	}
+}
+
+func (w *WorkerProcess) CleanUp() {
+
+	fmt.Printf("CleanUp: WorkerId: %v\n", w.workerData.workerId)
+
+	for _, ch := range w.workerData.broadcastChannels {
+		close(ch)
+	}
+	CleanUpBroadcastSocket(w.workerData.clientAddress)
 }
 
 // example function to show how to make an RPC call to the coordinator.

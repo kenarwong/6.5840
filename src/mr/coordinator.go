@@ -198,7 +198,7 @@ func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 	fmt.Printf("GetTask (Coordinator): Request from WorkerId %v\n", args.WorkerId)
 
-	// Phase restrictions
+	// Phase switch
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
 	case COORDINATOR_REDUCE_PHASE:
@@ -207,61 +207,62 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		return err
 	}
 
-	switch c.phase {
-	case MAP_TASK_TYPE:
-		// Get task
-		i := len(c.toDo) - 1
+	// Get task
+	i := len(c.toDo) - 1
 
-		// No tasks available
-		if i < 0 {
-			log.Printf("GetTask (Coordinator): No tasks available.")
-			reply.WorkerId = args.WorkerId
-			reply.TaskType = NO_TASK_TYPE
-
-			// Update worker state
-			c.AddUpdateWorker(TaskWorker{
-				workerId: args.WorkerId,
-				state:    WORKER_STATE_IDLE,
-				taskType: NO_TASK_TYPE,
-				task:     nil,
-			})
-			return nil
-		}
-
-		t, ok := c.GetToDoTask(i)
-		if !ok {
-			// log.Fatalf("error %v", err)
-			log.Printf("GetTask (Coordinator): Missing task at index %v", i)
-			err := fmt.Errorf("Task tracking error")
-			return err
-		}
-		c.RemoveToDoTask(t)
-
-		// Reply to worker
+	// No tasks available
+	if i < 0 {
+		log.Printf("GetTask (Coordinator): No tasks available.")
 		reply.WorkerId = args.WorkerId
-		reply.TaskType = MAP_TASK_TYPE
-		reply.MapTaskId = t.(MapTask).id
-		reply.NReduce = c.reducePhaseData.numberOfTotalTasks
-		reply.Filename = t.(MapTask).inputSlice.filename
-		reply.ReportInterval = 5
-
-		// fmt.Printf("GetTask (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v, nReduce %v, Filename %v\n",
-		// 	reply.WorkerId, reply.TaskType, reply.MapTaskId, reply.NReduce, reply.Filename)
-
-		// Move task to inProgress
-		//t.startTime = time.Now()
-		c.AddInProgressTask(t)
+		reply.TaskType = NO_TASK_TYPE
 
 		// Update worker state
 		c.AddUpdateWorker(TaskWorker{
 			workerId: args.WorkerId,
-			state:    WORKER_STATE_ACTIVE,
-			taskType: MAP_TASK_TYPE,
-			task:     t,
+			state:    WORKER_STATE_IDLE,
+			taskType: NO_TASK_TYPE,
+			task:     nil,
 		})
-
-	case REDUCE_TASK_TYPE:
+		return nil
 	}
+
+	t, ok := c.GetToDoTask(i)
+	if !ok {
+		// log.Fatalf("error %v", err)
+		log.Printf("GetTask (Coordinator): Missing task at index %v", i)
+		err := fmt.Errorf("Task tracking error")
+		return err
+	}
+	c.RemoveToDoTask(t)
+
+	// Reply to worker
+	reply.WorkerId = args.WorkerId
+	reply.TaskType = t.TaskType()
+	reply.MapTaskId = t.Id()
+	reply.ReportInterval = 5
+
+	// Phase-specific handling
+	switch c.phase {
+	case COORDINATOR_MAP_PHASE:
+		reply.Filename = t.(MapTask).inputSlice.filename
+		reply.NReduce = c.reducePhaseData.numberOfTotalTasks
+	case COORDINATOR_REDUCE_PHASE:
+	}
+
+	// fmt.Printf("GetTask (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v, nReduce %v, Filename %v\n",
+	// 	reply.WorkerId, reply.TaskType, reply.MapTaskId, reply.NReduce, reply.Filename)
+
+	// Move task to inProgress
+	//t.startTime = time.Now()
+	c.AddInProgressTask(t)
+
+	// Update worker state
+	c.AddUpdateWorker(TaskWorker{
+		workerId: args.WorkerId,
+		state:    WORKER_STATE_ACTIVE,
+		taskType: t.TaskType(),
+		task:     t,
+	})
 
 	c.PrintTaskReport()
 	return nil

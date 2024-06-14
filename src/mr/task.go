@@ -29,6 +29,7 @@ type InputSlice struct {
 type MapTask struct {
 	id              int
 	inputSlice      InputSlice
+	nMap            int
 	nReduce         int
 	startTime       time.Time
 	lastUpdatedTime time.Time
@@ -51,7 +52,8 @@ func (t MapTask) GetReportInterval() int {
 
 type ReduceTask struct {
 	id              int
-	filename        string
+	nMap            int
+	nReduce         int
 	startTime       time.Time
 	lastUpdatedTime time.Time
 	endTime         time.Time

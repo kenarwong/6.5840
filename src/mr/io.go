@@ -28,14 +28,14 @@ func Read(filename string) string {
 	return string(content)
 }
 
-func GetIntermediateFileName(workerId int, reduceTaskId int) string {
-	return fmt.Sprintf(TEMP_FILE_FORMAT, workerId, reduceTaskId)
+func GetIntermediateFileName(mapWorkerId int, reduceTaskId int) string {
+	return fmt.Sprintf(TEMP_FILE_FORMAT, mapWorkerId, reduceTaskId)
 }
 
-func GetIntermediateFileNamesByMapTaskId(mapTaskId int, nReduce int) []string {
+func GetIntermediateFileNamesByMapTaskId(mapWorkerId int, nReduce int) []string {
 	intermediateFilenames := make([]string, nReduce)
 	for r := 0; r < nReduce; r++ {
-		intermediateFilenames[r] = GetIntermediateFileName(mapTaskId, r)
+		intermediateFilenames[r] = GetIntermediateFileName(mapWorkerId, r)
 	}
 	return intermediateFilenames
 }

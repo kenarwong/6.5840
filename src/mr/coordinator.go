@@ -41,11 +41,11 @@ type Coordinator struct {
 
 	// Task tracking
 	muToDo       sync.Mutex
-	toDo         map[int]Task
+	toDo         map[int]map[int]Task
 	muInProgress sync.Mutex
-	inProgress   map[int]Task
+	inProgress   map[int]map[int]Task
 	muCompleted  sync.Mutex
-	completed    map[int]Task
+	completed    map[int]map[int]Task
 
 	// Notification channels
 	clientAddresses   []string
@@ -75,58 +75,58 @@ func (c *Coordinator) GetWorker(workerId int) TaskWorker {
 func (c *Coordinator) AddToDoTask(t Task) {
 	c.muToDo.Lock()
 	defer c.muToDo.Unlock()
-	c.toDo[t.Id()] = t
+	c.toDo[t.TaskType()][t.Id()] = t
 }
 
-func (c *Coordinator) GetToDoTask(id int) (Task, bool) {
+func (c *Coordinator) GetToDoTask(taskType int, id int) (Task, bool) {
 	c.muToDo.Lock()
 	defer c.muToDo.Unlock()
-	t, ok := c.toDo[id]
+	t, ok := c.toDo[taskType][id]
 	return t, ok
 }
 
 func (c *Coordinator) RemoveToDoTask(t Task) {
 	c.muToDo.Lock()
 	defer c.muToDo.Unlock()
-	delete(c.toDo, t.Id())
+	delete(c.toDo[t.TaskType()], t.Id())
 }
 
 func (c *Coordinator) AddInProgressTask(t Task) {
 	c.muInProgress.Lock()
 	defer c.muInProgress.Unlock()
-	c.inProgress[t.Id()] = t
+	c.inProgress[t.TaskType()][t.Id()] = t
 }
 
-func (c *Coordinator) GetInProgressTask(id int) (Task, bool) {
+func (c *Coordinator) GetInProgressTask(taskType int, id int) (Task, bool) {
 	c.muToDo.Lock()
 	defer c.muToDo.Unlock()
-	t, ok := c.inProgress[id]
+	t, ok := c.inProgress[taskType][id]
 	return t, ok
 }
 
 func (c *Coordinator) RemoveInProgressTask(t Task) {
 	c.muInProgress.Lock()
 	defer c.muInProgress.Unlock()
-	delete(c.inProgress, t.Id())
+	delete(c.inProgress[t.TaskType()], t.Id())
 }
 
 func (c *Coordinator) AddCompletedTask(t Task) {
 	c.muCompleted.Lock()
 	defer c.muCompleted.Unlock()
-	c.completed[t.Id()] = t
+	c.completed[t.TaskType()][t.Id()] = t
 }
 
-func (c *Coordinator) GetCompletedTask(id int) (Task, bool) {
+func (c *Coordinator) GetCompletedTask(taskType int, id int) (Task, bool) {
 	c.muToDo.Lock()
 	defer c.muToDo.Unlock()
-	t, ok := c.completed[id]
+	t, ok := c.completed[taskType][id]
 	return t, ok
 }
 
 func (c *Coordinator) RemoveCompletedTask(t Task) {
 	c.muCompleted.Lock()
 	defer c.muCompleted.Unlock()
-	delete(c.completed, t.Id())
+	delete(c.completed[t.TaskType()], t.Id())
 }
 
 func (c *Coordinator) UpdateClientAddresses() {
@@ -149,31 +149,35 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 func (c *Coordinator) PrintTaskReport() {
 	var phaseString string
-	var totalTasks int
+	var totalPhaseTasks int
+	var taskType int
 	switch c.phase {
 	case COORDINATOR_INIT_PHASE:
 		phaseString = "Phase: Init"
+		taskType = MAP_TASK_TYPE // Task tracking in init phase is already set up for map tasks
 	case COORDINATOR_MAP_PHASE:
 		phaseString = "Phase: Map"
-		totalTasks = c.mapPhaseData.numberOfTotalTasks
+		totalPhaseTasks = c.mapPhaseData.numberOfTotalTasks
+		taskType = MAP_TASK_TYPE
 	case COORDINATOR_REDUCE_PHASE:
 		phaseString = "Phase: Reduce"
-		totalTasks = c.reducePhaseData.numberOfTotalTasks
+		totalPhaseTasks = c.reducePhaseData.numberOfTotalTasks
+		taskType = REDUCE_TASK_TYPE
 	case COORDINATOR_CLEANUP_PHASE:
 		phaseString = "Phase: Clean up"
 	case COORDINATOR_COMPLETE_PHASE:
 		phaseString = "Phase: Complete"
 	}
-	fmt.Printf("%s --- To Do: %d, In Progress: %d, Completed: %d, Total: %d\n",
-		phaseString, len(c.toDo), len(c.inProgress), len(c.completed), totalTasks)
+	fmt.Printf("%s --- Current Phase --- Total: %d, To Do: %d, In Progress: %d, Completed: %d\n",
+		phaseString, totalPhaseTasks, len(c.toDo[taskType]), len(c.inProgress[taskType]), len(c.completed[taskType]))
 }
 
 func (c *Coordinator) Register(args *RegisterArgs, reply *RegisterReply) error {
 	// Phase restrictions
 	switch c.phase {
 	case COORDINATOR_INIT_PHASE:
-	// case COORDINATOR_MAP_PHASE:
-	// case COORDINATOR_REDUCE_PHASE:
+	case COORDINATOR_MAP_PHASE:
+	case COORDINATOR_REDUCE_PHASE:
 	default:
 		err := fmt.Errorf("invalid phase %v", c.phase)
 		return err
@@ -205,16 +209,20 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 	fmt.Printf("GetTask (Coordinator): Request from WorkerId %v\n", args.WorkerId)
 
 	// Phase switch
+	var taskType int
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
+		taskType = MAP_TASK_TYPE
 	case COORDINATOR_REDUCE_PHASE:
+		taskType = REDUCE_TASK_TYPE
 	default:
 		err := fmt.Errorf("invalid phase %v", c.phase)
 		return err
 	}
 
 	// Get task
-	i := len(c.toDo) - 1
+	// Index last task in the taskType list
+	i := len(c.toDo[taskType]) - 1
 
 	// No tasks available
 	if i < 0 {
@@ -232,7 +240,7 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		return nil
 	}
 
-	t, ok := c.GetToDoTask(i)
+	t, ok := c.GetToDoTask(taskType, i)
 	if !ok {
 		// log.Fatalf("error %v", err)
 		log.Printf("GetTask (Coordinator): Missing task at index %v", i)
@@ -244,19 +252,24 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 	// Reply to worker
 	reply.WorkerId = args.WorkerId
 	reply.TaskType = t.TaskType()
-	reply.MapTaskId = t.Id()
+	reply.TaskId = t.Id()
 	reply.ReportInterval = 5
+
+	// TODO: Review this approach
+	// Providing NMap and NReduce so that workers can derive standardized filenames
+	// for intermediate file handling (writing and retrieval)
+	reply.NMap = c.mapPhaseData.numberOfTotalTasks
+	reply.NReduce = c.reducePhaseData.numberOfTotalTasks
 
 	// Phase-specific handling
 	switch c.phase {
 	case COORDINATOR_MAP_PHASE:
 		reply.Filename = t.(MapTask).inputSlice.filename
-		reply.NReduce = c.reducePhaseData.numberOfTotalTasks
 	case COORDINATOR_REDUCE_PHASE:
 	}
 
-	// fmt.Printf("GetTask (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v, nReduce %v, Filename %v\n",
-	// 	reply.WorkerId, reply.TaskType, reply.MapTaskId, reply.NReduce, reply.Filename)
+	// fmt.Printf("GetTask (Coordinator): WorkerId %v, TaskType %v, TaskId %v, nReduce %v, Filename %v\n",
+	// 	reply.WorkerId, reply.TaskType, reply.TaskId, reply.NReduce, reply.Filename)
 
 	// Move task to inProgress
 	//t.startTime = time.Now()
@@ -287,14 +300,14 @@ func (c *Coordinator) StatusReport(args *StatusReportArgs, reply *StatusReportRe
 	w := c.GetWorker(args.WorkerId)
 
 	// Task report
-	fmt.Printf("StatusReport (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", w.workerId, w.task.TaskType(), w.task.Id())
+	fmt.Printf("StatusReport (Coordinator): WorkerId %v, TaskType %v, TaskId %v \n", w.workerId, w.task.TaskType(), w.task.Id())
 	fmt.Printf("StatusReport (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
 
 	// Complete
 	if args.Complete {
 		//t.lastUpdatedTime = time.Now()
 
-		t, ok := c.GetInProgressTask(w.task.Id())
+		t, ok := c.GetInProgressTask(w.task.TaskType(), w.task.Id())
 		if !ok {
 			log.Printf("StatusReport (Coordinator): Missing task at index %v", w.task.Id())
 			err := fmt.Errorf("Task tracking error")
@@ -367,7 +380,7 @@ func (c *Coordinator) InitMapPhase(files []string) error {
 }
 
 func (c *Coordinator) InitReducePhase() error {
-	fmt.Println("InitMapPhase (Coordinator): Creating tasks...")
+	fmt.Println("InitReducePhase (Coordinator): Creating tasks...")
 	for i := 0; i < c.reducePhaseData.numberOfTotalTasks; i++ {
 		t := ReduceTask{
 			id: i,
@@ -421,8 +434,8 @@ func (c *Coordinator) PhaseCheck() error {
 
 		// Check if all map tasks are complete
 		// Check ToDo and InProgress
-		if c.mapPhaseData.numberOfTotalTasks == len(c.completed) &&
-			len(c.toDo) == 0 && len(c.inProgress) == 0 {
+		if c.mapPhaseData.numberOfTotalTasks == len(c.completed[MAP_TASK_TYPE]) &&
+			len(c.toDo[MAP_TASK_TYPE]) == 0 && len(c.inProgress[MAP_TASK_TYPE]) == 0 {
 			fmt.Printf("PhaseCheck (Coordinator): Map phase complete.\n")
 			fmt.Printf("PhaseCheck (Coordinator): Worker status report...\n")
 
@@ -440,22 +453,37 @@ func (c *Coordinator) PhaseCheck() error {
 			// How often should we check for stragglers?
 			// How often should we broadcast tasks are available?
 			// Update client addresses when clients drop off or come online
-			//} else if len(c.toDo) > 0 {
+			//} else if len(c.toDo[MAP_TASK_TYPE]) > 0 {
 
 			//for _, w := range(c.workers) {
 			//	if w.state == WORKER_STATE_IDLE {
+
+			// Broadcast tasks are available to workers
+			fmt.Println("PhaseCheck (Coordinator): Broadcast tasks available")
+			c.broadcastChannels["notification"] <- TASKS_AVAILABLE_NOTIFICATION
 		}
 
 		return nil
 	case COORDINATOR_REDUCE_PHASE:
 		fmt.Println("PhaseCheck (Coordinator): Reduce phase")
 
+		// Check if all reduce tasks are complete
 		// Check ToDo and InProgress
-		// Check reduce slice completion status
+		if c.reducePhaseData.numberOfTotalTasks == len(c.completed[REDUCE_TASK_TYPE]) &&
+			len(c.toDo[REDUCE_TASK_TYPE]) == 0 && len(c.inProgress[REDUCE_TASK_TYPE]) == 0 {
+			fmt.Printf("PhaseCheck (Coordinator): Reduce phase complete.\n")
+			fmt.Printf("PhaseCheck (Coordinator): Worker status report...\n")
 
-		// Change to complete phase when reduce phase complete
-		fmt.Println("PhaseCheck (Coordinator): Change to clean up phase")
-		c.phase = COORDINATOR_CLEANUP_PHASE
+			// Worker status report
+			for _, wk := range c.workers {
+				fmt.Printf("WorkerId %v, Task Type %d, Worker State %d\n",
+					wk.workerId, wk.state, wk.taskType)
+			}
+
+			// Change to cleanup phase when reduce phase complete
+			fmt.Println("PhaseCheck (Coordinator): Change to clean up phase")
+			c.phase = COORDINATOR_CLEANUP_PHASE
+		}
 
 		return nil
 	case COORDINATOR_CLEANUP_PHASE:
@@ -536,11 +564,19 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 			numberOfTotalTasks: nReduce,
 		},
 		workers:         make(map[int]TaskWorker),
-		toDo:            make(map[int]Task),
-		inProgress:      make(map[int]Task),
-		completed:       make(map[int]Task),
+		toDo:            make(map[int]map[int]Task),
+		inProgress:      make(map[int]map[int]Task),
+		completed:       make(map[int]map[int]Task),
 		clientAddresses: []string{},
 	}
+
+	// Initialize each map
+	c.toDo[MAP_TASK_TYPE] = make(map[int]Task)
+	c.toDo[REDUCE_TASK_TYPE] = make(map[int]Task)
+	c.inProgress[MAP_TASK_TYPE] = make(map[int]Task)
+	c.inProgress[REDUCE_TASK_TYPE] = make(map[int]Task)
+	c.completed[MAP_TASK_TYPE] = make(map[int]Task)
+	c.completed[REDUCE_TASK_TYPE] = make(map[int]Task)
 
 	// Start broadcast socket
 	// Provide pointer for client address array (which will be updated by coordinator)

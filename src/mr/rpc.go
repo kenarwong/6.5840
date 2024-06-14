@@ -41,8 +41,8 @@ type TaskArgs struct {
 type TaskReply struct {
 	WorkerId       int
 	TaskType       int
-	MapTaskId      int
-	ReduceTaskId   int
+	TaskId         int
+	NMap           int
 	NReduce        int
 	Filename       string
 	ReportInterval int
@@ -60,7 +60,8 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 			task = nil
 		case MAP_TASK_TYPE:
 			task = MapTask{
-				id:      reply.MapTaskId,
+				id:      reply.TaskId,
+				nMap:    reply.NMap,
 				nReduce: reply.NReduce,
 				inputSlice: InputSlice{
 					filename: reply.Filename,
@@ -69,7 +70,9 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 			}
 		case REDUCE_TASK_TYPE:
 			task = ReduceTask{
-				id:             reply.ReduceTaskId,
+				id:             reply.TaskId,
+				nMap:           reply.NMap,
+				nReduce:        reply.NReduce,
 				reportInterval: reply.ReportInterval,
 			}
 		default:
@@ -85,12 +88,11 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 }
 
 type StatusReportArgs struct {
-	WorkerId     int
-	TaskType     int
-	MapTaskId    int
-	ReduceTaskId int
-	Progress     int
-	Complete     bool
+	WorkerId int
+	TaskType int
+	TaskId   int
+	Progress int
+	Complete bool
 }
 
 type StatusReportReply struct {

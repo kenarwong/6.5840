@@ -241,8 +241,12 @@ func (c *Coordinator) GetTask(args *TaskArgs, reply *TaskReply) error {
 		reply.WorkerId = args.WorkerId
 		reply.TaskType = MAP_TASK_TYPE
 		reply.MapTaskId = t.(MapTask).id
+		reply.NReduce = c.reducePhaseData.numberOfTotalTasks
 		reply.Filename = t.(MapTask).inputSlice.filename
 		reply.ReportInterval = 5
+
+		// fmt.Printf("GetTask (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v, nReduce %v, Filename %v\n",
+		// 	reply.WorkerId, reply.TaskType, reply.MapTaskId, reply.NReduce, reply.Filename)
 
 		// Move task to inProgress
 		//t.startTime = time.Now()

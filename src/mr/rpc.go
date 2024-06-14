@@ -43,6 +43,7 @@ type TaskReply struct {
 	TaskType       int
 	MapTaskId      int
 	ReduceTaskId   int
+	NReduce        int
 	Filename       string
 	ReportInterval int
 }
@@ -59,7 +60,8 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 			task = nil
 		case MAP_TASK_TYPE:
 			task = MapTask{
-				id: reply.MapTaskId,
+				id:      reply.MapTaskId,
+				nReduce: reply.NReduce,
 				inputSlice: InputSlice{
 					filename: reply.Filename,
 				},
@@ -71,6 +73,9 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 			err := fmt.Errorf("invalid task type %v", reply.TaskType)
 			return err, nil
 		}
+
+		// fmt.Printf("GetTask: WorkerId %v, TaskType %v, TaskId %v, nReduce %v\n",
+		// 	reply.WorkerId, reply.TaskType, task.Id(), reply.NReduce)
 
 		return nil, task
 	}

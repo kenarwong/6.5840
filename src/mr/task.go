@@ -29,6 +29,7 @@ type InputSlice struct {
 type MapTask struct {
 	id              int
 	inputSlice      InputSlice
+	nReduce         int
 	startTime       time.Time
 	lastUpdatedTime time.Time
 	endTime         time.Time

@@ -52,7 +52,6 @@ func (t MapTask) GetReportInterval() int {
 type ReduceTask struct {
 	id              int
 	filename        string
-	outputSlice     int
 	startTime       time.Time
 	lastUpdatedTime time.Time
 	endTime         time.Time

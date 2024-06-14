@@ -68,7 +68,10 @@ func MarshalGetTaskCall(workerId int) (*TaskArgs, *TaskReply, func() (error, Tas
 				reportInterval: reply.ReportInterval,
 			}
 		case REDUCE_TASK_TYPE:
-			task = ReduceTask{}
+			task = ReduceTask{
+				id:             reply.ReduceTaskId,
+				reportInterval: reply.ReportInterval,
+			}
 		default:
 			err := fmt.Errorf("invalid task type %v", reply.TaskType)
 			return err, nil

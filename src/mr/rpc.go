@@ -96,13 +96,11 @@ type StatusReportArgs struct {
 type StatusReportReply struct {
 }
 
-func MarshalStatusReportCall(workerId int, task Task, progress int, complete bool) (*StatusReportArgs, *StatusReportReply, func()) {
+func MarshalStatusReportCall(workerId int, progress int, complete bool) (*StatusReportArgs, *StatusReportReply, func()) {
 	args := StatusReportArgs{
-		WorkerId:  workerId,
-		TaskType:  task.TaskType(),
-		MapTaskId: task.Id(),
-		Progress:  progress,
-		Complete:  complete,
+		WorkerId: workerId,
+		Progress: progress,
+		Complete: complete,
 	}
 	reply := StatusReportReply{}
 	return &args, &reply, func() {

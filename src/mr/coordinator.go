@@ -66,6 +66,12 @@ func (c *Coordinator) AddUpdateWorker(w TaskWorker) {
 	c.workers[w.workerId] = w
 }
 
+func (c *Coordinator) GetWorker(workerId int) TaskWorker {
+	c.muWorkers.Lock()
+	defer c.muWorkers.Unlock()
+	return c.workers[workerId]
+}
+
 func (c *Coordinator) AddToDoTask(t Task) {
 	c.muToDo.Lock()
 	defer c.muToDo.Unlock()
@@ -278,51 +284,42 @@ func (c *Coordinator) StatusReport(args *StatusReportArgs, reply *StatusReportRe
 		return err
 	}
 
-	switch args.TaskType {
-	case MAP_TASK_TYPE:
-		// Task report
-		fmt.Printf("StatusReport (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", args.WorkerId, args.TaskType, args.MapTaskId)
-		fmt.Printf("StatusReport (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
+	w := c.GetWorker(args.WorkerId)
 
-		// Complete
-		if args.Complete {
-			//t.lastUpdatedTime = time.Now()
+	// Task report
+	fmt.Printf("StatusReport (Coordinator): WorkerId %v, TaskType %v, MapTaskId %v \n", w.workerId, w.task.TaskType(), w.task.Id())
+	fmt.Printf("StatusReport (Coordinator): Progress: %v, Complete: %v \n", args.Progress, args.Complete)
 
-			t, ok := c.GetInProgressTask(args.MapTaskId)
-			if !ok {
-				log.Printf("StatusReport (Coordinator): Missing task at index %v", args.MapTaskId)
-				err := fmt.Errorf("Task tracking error")
-				return err
-			}
+	// Complete
+	if args.Complete {
+		//t.lastUpdatedTime = time.Now()
 
-			// Remove from inProgress
-			c.RemoveInProgressTask(t)
-
-			// Add to completed
-			c.AddCompletedTask(t)
-
-			c.AddUpdateWorker(TaskWorker{
-				workerId: args.WorkerId,
-				state:    WORKER_STATE_IDLE,
-				taskType: NO_TASK_TYPE,
-				task:     nil,
-			})
-
-			c.PrintTaskReport()
+		t, ok := c.GetInProgressTask(w.task.Id())
+		if !ok {
+			log.Printf("StatusReport (Coordinator): Missing task at index %v", w.task.Id())
+			err := fmt.Errorf("Task tracking error")
+			return err
 		}
 
-		// In Progress
-		// Update task progress
+		// Remove from inProgress
+		c.RemoveInProgressTask(t)
 
-		// Check if no progress made
-		// No progress made
-		// Check against timeout
-		// Move task back to toDo
+		// Add to completed
+		c.AddCompletedTask(t)
 
-	case REDUCE_TASK_TYPE:
-	default:
-		log.Printf("StatusReport (Coordinator): Unknown TaskType %v\n", args.TaskType)
+		c.AddUpdateWorker(TaskWorker{
+			workerId: w.workerId,
+			state:    WORKER_STATE_IDLE,
+			taskType: NO_TASK_TYPE,
+			task:     nil,
+		})
+
+		c.PrintTaskReport()
 	}
+
+	// TODO: Handle stragglers
+	// TODO: Manage failures
+
 	return nil
 }
 

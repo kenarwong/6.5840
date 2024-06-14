@@ -257,7 +257,7 @@ func (w *WorkerProcess) Execute() (err error) {
 
 			// *** TEMP FAKE DELAY ***
 			// To demonstrate progress
-			//time.Sleep(1 * time.Millisecond)
+			time.Sleep(1 * time.Microsecond)
 		}
 		w.workerData.complete = true // Officially mark as complete (as opposed to regular reporting)
 		fmt.Printf("Execute (Worker): WorkerId: %v, TaskId: %v, Complete: %v\n",
@@ -269,7 +269,7 @@ func (w *WorkerProcess) Execute() (err error) {
 
 		//content := Read(task.(MapTask).inputSlice.filename)
 		// dec := json.NewDecoder(file)
-		// for {
+		// for
 		//   var kv KeyValue
 		//   if err := dec.Decode(&kv); err != nil {
 		// 	break
@@ -296,7 +296,7 @@ func (w *WorkerProcess) StatusReport() {
 	//fmt.Printf("StatusReport: WorkerId: %v, TaskId: %v, Progress: %v, Complete: %t\n",
 	//	w.workerData.workerId, workerData.task.Id(), workerData.progress, workerData.complete)
 
-	argsPtr, replyPtr, _ := MarshalStatusReportCall(w.workerData.workerId, w.workerData.task, w.workerData.progress, w.workerData.complete)
+	argsPtr, replyPtr, _ := MarshalStatusReportCall(w.workerData.workerId, w.workerData.progress, w.workerData.complete)
 
 	ok := call("Coordinator.StatusReport", argsPtr, replyPtr)
 	if ok {
